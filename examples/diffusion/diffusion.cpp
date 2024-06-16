@@ -2,13 +2,13 @@
 #include <lsBooleanOperation.hpp>
 #include <lsWriteVisualizationMesh.hpp>
 
+#include "parameters.hpp"
+
 namespace cs = viennacs;
 namespace ls = viennals;
 
 using T = double;
 constexpr int D = 2;
-
-using cs::util::Parameters;
 
 const int substrateMaterial = 0;
 const int maskMaterial = 1;
@@ -43,18 +43,18 @@ void makeBox(levelSetType &domain, const T *minPoint, const T *maxPoint) {
       .apply();
 }
 
-auto makeStructure(const Parameters &params, materialMapType matMap) {
-  const T gridDelta = params.get("gridDelta");
-  const T substrateHeight = params.get("substrateHeight");
-  const T coverHeight = params.get("coverHeight");
-  const T maskHeight = params.get("maskHeight");
-  const T holeRadius = params.get("holeRadius");
+auto makeStructure(const Parameters<T> &params, materialMapType matMap) {
+  const T gridDelta = params.gridDelta;
+  const T substrateHeight = params.substrateHeight;
+  const T coverHeight = params.coverHeight;
+  const T maskHeight = params.maskHeight;
+  const T holeRadius = params.holeRadius;
   ls::BoundaryConditionEnum<D> boundaryConds[D] = {
       ls::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY,
       ls::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY};
   boundaryConds[D - 1] = ls::BoundaryConditionEnum<D>::INFINITE_BOUNDARY;
-  T bounds[2 * D] = {-params.get("xExtent") / 2., params.get("xExtent") / 2.,
-                     -params.get("yExtent") / 2., params.get("yExtent") / 2.};
+  T bounds[2 * D] = {-params.xExtent / 2., params.xExtent / 2.,
+                     -params.yExtent / 2., params.yExtent / 2.};
   bounds[2 * D - 2] = 0.;
   bounds[2 * D - 1] = substrateHeight + maskHeight + gridDelta;
 
@@ -105,7 +105,7 @@ template <typename Material> bool isMaterial(Material x, int material) {
 }
 
 void addConcentration(cs::DenseCellSet<T, D> &cellSet,
-                      const Parameters &params) {
+                      const Parameters<T> &params) {
   // Add quantity to be diffused (on top of the cell material)
   auto concentration = cellSet.addScalarData("dopant", 0.);
   auto materials = cellSet.getScalarData("Material");
@@ -115,20 +115,20 @@ void addConcentration(cs::DenseCellSet<T, D> &cellSet,
   for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
     if (isMaterial((*materials)[i], coverMaterial) &&
         cellSet.getCellCenter(i)[D - 1] <
-            params.get("substrateHeight") + params.get("gridDelta")) {
-      (*concentration)[i] = params.get("boundaryValue");
+            params.substrateHeight + params.gridDelta) {
+      (*concentration)[i] = params.boundaryValue;
     }
   }
 }
 
 // Explicit diffusion time-step (forward Euler)
 void solveDiffusionStep(cs::DenseCellSet<T, D> &cellSet,
-                        const Parameters &params, T dt) {
+                        const Parameters<T> &params, T dt) {
   auto data = cellSet.getScalarData("dopant");
   auto materials = cellSet.getScalarData("Material");
   std::vector<T> solution(data->size(), 0.);
-  const T dx = params.get("gridDelta");
-  const T C = dt * params.get("diffusionCoefficient") / (dx * dx);
+  const T dx = params.gridDelta;
+  const T C = dt * params.diffusionCoefficient / (dx * dx);
 
 #pragma omp parallel for
   for (int e = 0; e < data->size(); e++) {
@@ -168,20 +168,22 @@ void saveVolumeMesh(std::string name, levelSetsType &levelSets,
 int main(int argc, char **argv) {
   cs::Logger::setLogLevel(cs::LogLevel::INTERMEDIATE);
 
-  Parameters params;
+  Parameters<T> params;
   if (argc > 1) {
-    params.readConfigFile(argv[1]);
-  } else {
-    std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
-    return 1;
+    auto config = cs::util::readFile(argv[1]);
+    if (config.empty()) {
+      std::cerr << "Empty config provided" << std::endl;
+      return -1;
+    }
+    params.fromMap(config);
   }
-  omp_set_num_threads(params.get<int>("numThreads"));
+  omp_set_num_threads(params.numThreads);
 
   auto matMap = materialMapType::New();
   auto levelSets = makeStructure(params, matMap);
 
   cs::DenseCellSet<T, D> cellSet;
-  T depth = params.get("substrateHeight") + params.get("coverHeight") + 10.;
+  T depth = params.substrateHeight + params.coverHeight + 10.;
   cellSet.setCellSetPosition(true); // isAboveSurface
   cellSet.setCoverMaterial(coverMaterial);
   cellSet.fromLevelSets(levelSets, matMap, depth);
@@ -191,18 +193,17 @@ int main(int argc, char **argv) {
   cellSet.buildNeighborhood();
   cellSet.writeVTU("initial.vtu");
 
-  if (params.get("velocity") != 0.) {
-    const T stability =
-        2 * params.get("diffusionCoefficient") / params.get("velocity");
+  if (params.velocity != 0.) {
+    const T stability = 2 * params.diffusionCoefficient / params.velocity;
     std::cout << "Stability: " << stability << std::endl;
-    if (0.5 * stability <= params.get("gridDelta"))
+    if (0.5 * stability <= params.gridDelta)
       std::cout << "Unstable parameters. Reduce grid spacing!" << std::endl;
   }
 
-  T duration = params.get("duration");
-  T dx = params.get("gridDelta");
-  T dt = std::min(dx * dx / (params.get("diffusionCoefficient") * 2 * D) *
-                      params.get("timeStabilityFactor"),
+  T duration = params.duration;
+  T dx = params.gridDelta;
+  T dt = std::min(dx * dx / (params.diffusionCoefficient * 2 * D) *
+                      params.timeStabilityFactor,
                   duration);
   T time = 0.;
   while (time < duration) {

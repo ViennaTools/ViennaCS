@@ -17,4 +17,4 @@ boundaryValue = 1
 timeStabilityFactor = 0.95  # Stable below 1 (explicit scheme)
 
 
-numThreads=4
+numThreads = 4
