@@ -745,22 +745,21 @@ private:
 
   void adjustMaterialIds() {
     auto matIds = getScalarData("Material");
-    if (!materialMap)
-      return;
 
 #pragma omp parallel for
     for (int i = 0; i < matIds->size(); i++) {
-      matIds->at(i) =
-          indexToMaterial(static_cast<int>(matIds->at(i)), materialMap);
+      matIds->at(i) = indexToMaterial(static_cast<int>(matIds->at(i)));
     }
   }
 
-  int indexToMaterial(int index, const materialMapType &materialMap) {
+  int indexToMaterial(int index) {
     // This takes into account the added coverMaterial layer
     if (!cellSetAboveSurface)
       --index;
-    if (index >= 0 && index < materialMap->getNumberOfLayers())
-      return materialMap->getMaterialId(index);
+    if (materialMap) {
+      if (index >= 0 && index < materialMap->getNumberOfLayers())
+        return materialMap->getMaterialId(index);
+    }
     return coverMaterial;
   }
 
