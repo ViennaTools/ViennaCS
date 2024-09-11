@@ -3,19 +3,19 @@
 
 namespace cs = viennacs;
 
-template <typename T, int D> auto makePlane(const T extent, const T gridDelta) {
+template <typename T, int D> auto makePlane(const T xExtent, const T yExtent,  const T gridDelta) {
   T bounds[2 * D] = {0.};
   if constexpr (D == 2) {
-    bounds[0] = -extent / 2.;
-    bounds[1] = extent / 2.;
-    bounds[2] = -1;
-    bounds[3] = 1;
+    bounds[0] = 0;
+    bounds[1] = xExtent;
+    bounds[2] = 0;
+    bounds[3] = yExtent;
   } else {
-    bounds[0] = -extent / 2.;
-    bounds[1] = extent / 2.;
-    bounds[2] = -extent / 2.;
-    bounds[3] = extent / 2.;
-    bounds[4] = -1;
+    bounds[0] = 0;
+    bounds[1] = xExtent;
+    bounds[2] = 0;
+    bounds[3] = yExtent;
+    bounds[4] = -1.;
     bounds[5] = 1.;
   }
 
@@ -33,7 +33,6 @@ template <typename T, int D> auto makePlane(const T extent, const T gridDelta) {
       levelSet,
       viennals::SmartPointer<viennals::Plane<T, D>>::New(origin, normal))
       .apply();
-
   return levelSet;
 }
 
@@ -48,18 +47,43 @@ private:
   const NumericType a_ = 1.;
 };
 
-int main() {
-
+int main(int argc, char** argv) {
   constexpr int D = 2;
   using NumericType = double;
 
-  auto levelSet = makePlane<NumericType, D>(10., 0.2);
+    // Parsing the parameters
+    cs::util::Parameters params;
+    if (argc > 1) {
+        params.readConfigFile(argv[1]);
+    } else {
+        std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
+        return 1;
+    }
+
+  auto levelSet = makePlane<NumericType, D>(params.get("xExtent"), params.get("yExtent"), params.get("gridDelta"));
 
   auto materialMap = cs::SmartPointer<viennals::MaterialMap>::New();
-  materialMap->insertNextMaterial(1);
+  //materialMap->insertNextMaterial(0); why do I need this line?
   auto cellSet = cs::SmartPointer<cs::DenseCellSet<NumericType, D>>::New();
-  cellSet->setCoverMaterial(1);
-  cellSet->fromLevelSets({levelSet}, materialMap, -5.);
+  // cellSet->setCoverMaterial(0); do I need this line?
+  cellSet->fromLevelSets({levelSet}, materialMap, params.get("depth"));
+  auto concentration = cellSet->addScalarData("aaa", 0);
+  for (int i=0; i<cellSet->getNumberOfCells(); i++){
+      //auto coord = cellSet->getCellCenter(i);
+      // auto cellNeighbors = cellSet->getNeighbors(i);
+      // std::cout << coord[0] << std::endl;
+      // std::cout << cellNeighbors[1] << std::endl;
+      //(*concentration)[i] = i*i;
+  }
+
+  for(int x = 0; x < 0; x++){
+      std::array<double, 3> coords{};
+      coords[0] = -3 + 1*x;
+      coords[1] = -2;
+      auto index = cellSet->getIndex(coords);
+      std::cout << index << std::endl;
+      (*concentration)[index] = 500. / x;
+  }
   cellSet->writeVTU("initial.vtu");
 
   auto model = cs::SmartPointer<MyImplantModel<NumericType, D>>::New(1.);
@@ -68,6 +92,8 @@ int main() {
   implant.setCellSet(cellSet);
   implant.setImplantModel(model);
   implant.apply();
+
+  cellSet->writeVTU("final.vtu");
 
   return 0;
 }

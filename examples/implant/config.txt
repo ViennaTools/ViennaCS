@@ -1,0 +1,3 @@
+gridDelta=0.25
+xExtent=15
+yExtent=15
