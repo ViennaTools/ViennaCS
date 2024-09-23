@@ -21,7 +21,7 @@ template <typename T, int D> auto makePlane(const T xExtent, const T yExtent,  c
 
   viennals::BoundaryConditionEnum<D> boundaryConds[D] = {
       viennals::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY};
-  boundaryConds[D - 1] = viennals::BoundaryConditionEnum<D>::INFINITE_BOUNDARY;
+  boundaryConds[D - 1] = viennals::BoundaryConditionEnum<D>::INFINITE_BOUNDARY; // warum genau eine Infinite Boundary condition?
 
   auto levelSet = viennals::SmartPointer<viennals::Domain<T, D>>::New(
       bounds, boundaryConds, gridDelta);
@@ -36,16 +36,24 @@ template <typename T, int D> auto makePlane(const T xExtent, const T yExtent,  c
   return levelSet;
 }
 
+// overwrite ImplantModel to describe implementation logic
 template <class NumericType, int D>
-class MyImplantModel : public cs::ImplantModel<NumericType, D> {
+class GaussianModel : public cs::ImplantModel<NumericType, D> {
 public:
-  MyImplantModel(const NumericType a) : a_(a) {};
+  GaussianModel(const NumericType a) : a_(a) {};
 
-  NumericType getDepthProfile(NumericType depth) override { return a_; }
+  NumericType getDepthProfile(NumericType depth) override {
+      NumericType stddev = 1;
+      NumericType mean = 5;
+      const double pi = 3.14159265358979323846;
+      return (1.0 / (stddev * std::sqrt(2 * pi))) *
+             std::exp(-0.5 * std::pow((depth - mean) / stddev, 2))*999;
+  }
 
 private:
   const NumericType a_ = 1.;
 };
+
 
 int main(int argc, char** argv) {
   constexpr int D = 2;
@@ -63,30 +71,12 @@ int main(int argc, char** argv) {
   auto levelSet = makePlane<NumericType, D>(params.get("xExtent"), params.get("yExtent"), params.get("gridDelta"));
 
   auto materialMap = cs::SmartPointer<viennals::MaterialMap>::New();
-  //materialMap->insertNextMaterial(0); why do I need this line?
+  materialMap->insertNextMaterial(0);
   auto cellSet = cs::SmartPointer<cs::DenseCellSet<NumericType, D>>::New();
-  // cellSet->setCoverMaterial(0); do I need this line?
+  cellSet->setCoverMaterial(0); //do I need this line?
   cellSet->fromLevelSets({levelSet}, materialMap, params.get("depth"));
   auto concentration = cellSet->addScalarData("aaa", 0);
-  for (int i=0; i<cellSet->getNumberOfCells(); i++){
-      //auto coord = cellSet->getCellCenter(i);
-      // auto cellNeighbors = cellSet->getNeighbors(i);
-      // std::cout << coord[0] << std::endl;
-      // std::cout << cellNeighbors[1] << std::endl;
-      //(*concentration)[i] = i*i;
-  }
-
-  for(int x = 0; x < 0; x++){
-      std::array<double, 3> coords{};
-      coords[0] = -3 + 1*x;
-      coords[1] = -2;
-      auto index = cellSet->getIndex(coords);
-      std::cout << index << std::endl;
-      (*concentration)[index] = 500. / x;
-  }
-  cellSet->writeVTU("initial.vtu");
-
-  auto model = cs::SmartPointer<MyImplantModel<NumericType, D>>::New(1.);
+  auto model = cs::SmartPointer<GaussianModel<NumericType, D>>::New(1.);
 
   cs::Implant<double, D> implant;
   implant.setCellSet(cellSet);

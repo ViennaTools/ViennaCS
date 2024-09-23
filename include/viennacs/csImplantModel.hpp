@@ -13,7 +13,11 @@ public:
 
   virtual NumericType getLateralProfile(NumericType offset, NumericType depth) {
     // profile of empirical implant model in lateral directions
-    return 0.;
+    NumericType stddev = 0.1;
+    NumericType mean = 0;
+    const double pi = 3.14159265358979323846;
+    return (1.0 / (stddev * std::sqrt(2 * pi))) *
+        std::exp(-0.5 * std::pow((offset - mean) / stddev, 2));
   }
 
   virtual NumericType getMaxDepth() {

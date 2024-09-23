@@ -1,3 +1,4 @@
+// apply the model to the geometry
 #pragma once
 
 #include <csDenseCellSet.hpp>
@@ -45,31 +46,24 @@ public:
 
     // apply the implant model to the cellSet_
     std::cout << "applying the model bli bla blub" << std::endl;
+    model_->getDepthProfile(1);
     int totalNumberOfIons = 50000; // idk if this is the best way to determine the dose
-    auto xCoord = cellSet_->getBoundingBox()[1][1] * 1/2; // the beam hits exactly in the middle, orthogonal to the y plane
-    auto length = cellSet_->getBoundingBox()[1][0];
+    auto halfXlength = cellSet_->getBoundingBox()[1][1] * 1 / 2; // the beam hits exactly in the middle, orthogonal to the y plane
+    auto yLength = cellSet_->getBoundingBox()[1][0];
     auto gridDelta = cellSet_->getGridDelta();
-    int numberOfHorizontalCells = length/gridDelta;
-    std::cout << numberOfHorizontalCells << std::endl;
-
-    // doing some normal distribution
-    std::random_device rd{};
-    std::mt19937 gen{rd()};
-    NumericType mu = 10. / gridDelta;
-    NumericType sigma = 2. / gridDelta;
-    NumericType mu_lateral = 0. / gridDelta;
-    NumericType sigma_lateral = 0.05/ gridDelta;
-    std::normal_distribution d{mu, sigma};
-    std::normal_distribution d_lateral{mu_lateral, sigma_lateral};
-    auto xPosIon = [&d, &gen]{ return std::round(d(gen));};
-    auto lateralDisplacementIon = [&d_lateral, &gen]{return std::round(d_lateral(gen));};
+    int numberOfHorizontalCells = yLength / gridDelta;
+    int halfNumberOfVerticalCells = halfXlength / gridDelta;
     auto concentration = cellSet_->getScalarData("aaa");
-    for (int i = 0; i<totalNumberOfIons; i++){
-        std::array<double, 3> coords{0, xCoord, 0};
-        coords[0] = xPosIon() * gridDelta;
-        coords[1] += lateralDisplacementIon() * gridDelta;
-        auto index = cellSet_->getIndex(coords);
-        (*concentration)[index]++;
+    // iterate over all horizontal cells
+    for (int i = 0; i < numberOfHorizontalCells; i++){
+        // iterate over vertical cells
+        for (int j = -halfNumberOfVerticalCells; j < halfNumberOfVerticalCells; j++){
+            NumericType depth = i * gridDelta;
+            NumericType lateralDisplacement = j * gridDelta;
+            std::array<double, 3> coords{depth, halfXlength + lateralDisplacement, 0};
+            auto index = cellSet_->getIndex(coords);
+            (*concentration)[index] = model_->getDepthProfile(depth) * model_->getLateralProfile(lateralDisplacement, depth);
+        }
     }
   }
 };
