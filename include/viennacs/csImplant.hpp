@@ -6,6 +6,7 @@
 
 #include <vcLogger.hpp>
 #include <random>
+#include <cmath>
 
 namespace viennacs {
 
@@ -14,6 +15,7 @@ using namespace viennacore;
 template <class NumericType, int D> class Implant {
   SmartPointer<DenseCellSet<NumericType, D>> cellSet_;
   SmartPointer<ImplantModel<NumericType, D>> model_;
+  util::Parameters params_;
   std::vector<int> maskMaterials;
 
 public:
@@ -26,6 +28,10 @@ public:
   void setImplantModel(
       SmartPointer<ImplantModel<NumericType, D>> passedImplantModel) {
     model_ = passedImplantModel;
+  }
+
+  void setParameters(util::Parameters passedParameters){
+      params_ = passedParameters;
   }
 
   template <class... Mats> void setMaskMaterials(Mats... mats) {
@@ -45,24 +51,33 @@ public:
     }
 
     // apply the implant model to the cellSet_
-    std::cout << "applying the model bli bla blub" << std::endl;
-    model_->getDepthProfile(1);
+    //model_->getDepthProfile(1, params_);
     int totalNumberOfIons = 50000; // idk if this is the best way to determine the dose
-    auto halfXlength = cellSet_->getBoundingBox()[1][1] * 1 / 2; // the beam hits exactly in the middle, orthogonal to the y plane
-    auto yLength = cellSet_->getBoundingBox()[1][0];
+    NumericType xLength = cellSet_->getBoundingBox()[1][1]; // the beam hits exactly in the middle, orthogonal to the y plane
+    NumericType yLength = cellSet_->getBoundingBox()[1][0];
     auto gridDelta = cellSet_->getGridDelta();
+    int numberOfVerticalCells = xLength / gridDelta;
     int numberOfHorizontalCells = yLength / gridDelta;
-    int halfNumberOfVerticalCells = halfXlength / gridDelta;
-    auto concentration = cellSet_->getScalarData("aaa");
+    //int halfNumberOfVerticalCells = halfXlength / gridDelta;
+    auto concentration = cellSet_->getScalarData("concentration");
+
+
+    double angle = -7;  // angle in degrees
+    // Convert angle to radians (C++ trig functions use radians)
+    double radians = angle * M_PI / 180.0;
+
     // iterate over all horizontal cells
-    for (int i = 0; i < numberOfHorizontalCells; i++){
-        // iterate over vertical cells
-        for (int j = -halfNumberOfVerticalCells; j < halfNumberOfVerticalCells; j++){
-            NumericType depth = i * gridDelta;
-            NumericType lateralDisplacement = j * gridDelta;
-            std::array<double, 3> coords{depth, halfXlength + lateralDisplacement, 0};
+    for (int i = 0; i < numberOfHorizontalCells * 2; i++){
+        // iterate over all vertical cells
+        for (int j = 0; j < numberOfVerticalCells * 2; j++){
+            NumericType x = i * gridDelta * 0.5; // going in half steps to avoid weird stripes
+            NumericType y = j * gridDelta * 0.5;
+            NumericType new_y = y - 0.25 * yLength;
+            NumericType depth = std::cos(radians) * x + std::sin(radians) * new_y;
+            NumericType lateralDisplacement = std::sin(radians) * x + std::cos(radians) * new_y;
+            std::array<double, 3> coords{x, y, 0};
             auto index = cellSet_->getIndex(coords);
-            (*concentration)[index] = model_->getDepthProfile(depth) * model_->getLateralProfile(lateralDisplacement, depth);
+            (*concentration)[index] = model_->getDepthProfile(depth, params_) * model_->getLateralProfile(lateralDisplacement, depth, params_);
         }
     }
   }
