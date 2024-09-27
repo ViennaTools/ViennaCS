@@ -62,7 +62,7 @@ public:
     auto concentration = cellSet_->getScalarData("concentration");
 
 
-    double angle = -7;  // angle in degrees
+    double angle = -45;  // angle in degrees
     // Convert angle to radians (C++ trig functions use radians)
     double radians = angle * M_PI / 180.0;
 
@@ -72,9 +72,9 @@ public:
         for (int j = 0; j < numberOfVerticalCells * 2; j++){
             NumericType x = i * gridDelta * 0.5; // going in half steps to avoid weird stripes
             NumericType y = j * gridDelta * 0.5;
-            NumericType new_y = y - 0.25 * yLength;
-            NumericType depth = std::cos(radians) * x + std::sin(radians) * new_y;
-            NumericType lateralDisplacement = std::sin(radians) * x + std::cos(radians) * new_y;
+            NumericType shifted_y = y - 0.25 * yLength;
+            NumericType depth = pow(std::cos(radians) * x, 2) + pow(std::sin(radians) * shifted_y, 2);
+            NumericType lateralDisplacement = std::sin(radians) * x + std::cos(radians) * shifted_y;
             std::array<double, 3> coords{x, y, 0};
             auto index = cellSet_->getIndex(coords);
             (*concentration)[index] = model_->getDepthProfile(depth, params_) * model_->getLateralProfile(lateralDisplacement, depth, params_);
