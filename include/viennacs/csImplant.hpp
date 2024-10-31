@@ -38,48 +38,83 @@ public:
     maskMaterials = {mats...};
   }
 
-  void apply() {
-    if (!model_) {
-      Logger::getInstance()
-          .addWarning("No implant model passed to Implant.")
-          .print();
+void apply(util::Parameters params){
+  if (!model_){
+      Logger::getInstance().addWarning("No implant model passed to Implant.").print();
       return;
-    }
-    if (!cellSet_) {
+  }
+  if (!cellSet_) {
       Logger::getInstance().addWarning("No cellSet passed to Implant.").print();
       return;
-    }
+  }
 
-    // apply the implant model to the cellSet_
-    //model_->getDepthProfile(1, params_);
-    int totalNumberOfIons = 50000; // idk if this is the best way to determine the dose
-    NumericType xLength = cellSet_->getBoundingBox()[1][1]; // the beam hits exactly in the middle, orthogonal to the y plane
-    NumericType yLength = cellSet_->getBoundingBox()[1][0];
-    auto gridDelta = cellSet_->getGridDelta();
-    int numberOfVerticalCells = xLength / gridDelta;
-    int numberOfHorizontalCells = yLength / gridDelta;
-    //int halfNumberOfVerticalCells = halfXlength / gridDelta;
-    auto concentration = cellSet_->getScalarData("concentration");
+  // now we apply the implant model to the cell set
+  auto boundingBox = cellSet_->getBoundingBox();
+  auto gridDelta = cellSet_->getGridDelta();
+  auto concentration = cellSet_->getScalarData("concentration");
+  auto material = cellSet_->getScalarData("Material");
+  NumericType xLength = std::abs(boundingBox[1][0] - boundingBox[0][0]);
+  NumericType yLength = std::abs(boundingBox[1][1] - boundingBox[0][1]);
+  std::cout << "xLength: " << xLength << std::endl;
+  std::cout << "yLength: " << yLength << std::endl;
+  int numberOfcellsXdirection = xLength / gridDelta;
+  int numberOfcellsYdirection = yLength / gridDelta;
+  std::cout << "X-cells: " << numberOfcellsXdirection << std::endl;
+  std::cout << "Y-cells: " << numberOfcellsYdirection << std::endl;
+  double angle = params.get("angle");
+  double radians = angle * M_PI / 180; // pls always use fucking radians
 
+  // ToDo: it seems like the algorithm doesn't quite iterate over *all* cells
+  // ToDo: it also tries to acces some cells that don't even exist
+  // iterate over all the beams that hit the x-plane from the y direction:
+  //toDo: take care of 'shadows'
+  // toDo: create rough surface
+  for (int i = 0; i < numberOfcellsXdirection; i++){
+      NumericType initialX = i*gridDelta - xLength / 2 + gridDelta;
+      NumericType initialY = yLength - gridDelta;
+      std::array<NumericType, 3> initialCoords{initialX, initialY, 0};
+      int initialIndex;
+      numberOfcellsYdirection = yLength / gridDelta;
+      do{
+          initialCoords[0] = initialX;
+          initialCoords[1] = initialY;
+          initialIndex = cellSet_->getIndex(initialCoords);
+          if(initialIndex == -1){
+              initialY -= gridDelta * std::cos(radians);
+              initialX -= gridDelta * std::sin(radians);
+              numberOfcellsYdirection -= 1;
+              if (std::abs(initialCoords[1]) > yLength){
+                  break;
+              }
+          } else {
+              if((*material)[initialIndex] == 0.){
+                  break;
+              } else {
+                  // iterate over all the cells in y direction (depth), and then
+                  // iterate over all the cells in x direction to get the lateral displacement
+                  for (int j = 0;j < numberOfcellsYdirection + 2; j++){
+                      for (int k = 0;k < numberOfcellsXdirection + 1; k++){
+                          NumericType yCord = j * gridDelta;
+                          NumericType xCord = k * gridDelta;
+                          NumericType shifted_xCord = xCord - xLength / 2;
+                          NumericType shifted_yCord = initialY - yCord;
+                          //std::cout << "coord: [" << shifted_xCord << ", " << shifted_yCord << "]" <<std::endl;
+                          NumericType depth = std::cos(radians) * yCord + std::sin(radians) * (initialX - shifted_xCord);
+                          NumericType lateralDisplacement = std::abs(std::cos(radians)*(initialX - shifted_xCord) - std::sin(radians) * yCord);
 
-    double angle = -45;  // angle in degrees
-    // Convert angle to radians (C++ trig functions use radians)
-    double radians = angle * M_PI / 180.0;
-
-    // iterate over all horizontal cells
-    for (int i = 0; i < numberOfHorizontalCells * 2; i++){
-        // iterate over all vertical cells
-        for (int j = 0; j < numberOfVerticalCells * 2; j++){
-            NumericType x = i * gridDelta * 0.5; // going in half steps to avoid weird stripes
-            NumericType y = j * gridDelta * 0.5;
-            NumericType shifted_y = y - 0.25 * yLength;
-            NumericType depth = pow(std::cos(radians) * x, 2) + pow(std::sin(radians) * shifted_y, 2);
-            NumericType lateralDisplacement = std::sin(radians) * x + std::cos(radians) * shifted_y;
-            std::array<double, 3> coords{x, y, 0};
-            auto index = cellSet_->getIndex(coords);
-            (*concentration)[index] = model_->getDepthProfile(depth, params_) * model_->getLateralProfile(lateralDisplacement, depth, params_);
-        }
-    }
+                          std::array<NumericType, 3> coords{shifted_xCord, shifted_yCord, 0};
+                          auto index = cellSet_->getIndex(coords);
+                          if (index != -1){
+                              (*concentration)[index] += model_->getDepthProfile(depth, params_) * model_->getLateralProfile(lateralDisplacement, depth, params_);
+                          } else {
+                              std::cout << "index miss @ [" << coords[0] << ", " << coords[1] << "] " << std::endl;
+                          }
+                      }
+                  }
+              }
+          }
+      } while (initialIndex == -1);
+  }
   }
 };
 

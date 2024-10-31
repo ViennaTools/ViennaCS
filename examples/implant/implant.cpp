@@ -1,7 +1,13 @@
 #include <csDenseCellSet.hpp>
 #include <csImplant.hpp>
+#include <psDomain.hpp>
+#include <psProcess.hpp>
+#include <geometries/psMakeTrench.hpp>
+#include <models/psDirectionalEtching.hpp>
+#include <models/psIsotropicProcess.hpp>
 
 namespace cs = viennacs;
+namespace ps = viennaps;
 
 template <typename T, int D> auto makePlane(const T xExtent, const T yExtent,  const T gridDelta) {
   T bounds[2 * D] = {0.};
@@ -36,6 +42,53 @@ template <typename T, int D> auto makePlane(const T xExtent, const T yExtent,  c
   return levelSet;
 }
 
+
+
+template <class T> class VelocityField : public viennals::VelocityField<T> {
+public:
+    VelocityField() {}
+
+    /// Should return a scalar value for the velocity at coordinate
+    /// for a point of material with the given normalVector.
+    T getScalarVelocity(const viennals::Vec3D<T> & /*coordinate*/,
+                        int /*material*/,
+                        const viennals::Vec3D<T> & /*normalVector*/,
+                        unsigned long /*pointId*/) override {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<T> dis(0, 1.);
+
+        return dis(gen);
+    }
+};
+
+template <class T> class MySurfaceModel : public ps::SurfaceModel<T> {
+public:
+    MySurfaceModel() {}
+
+    ps::SmartPointer<std::vector<T>>
+    calculateVelocities(ps::SmartPointer<viennals::PointData<T>> rates,
+                        const std::vector<ps::Vec3D<T>> &coordinates,
+                        const std::vector<T> &materialIds) override {
+
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_real_distribution<T> dis(0, 1.);
+
+        std::vector<T> velocities;
+
+        for (unsigned i = 0; i < coordinates.size(); ++i) {
+            if (ps::MaterialMap::isMaterial(materialIds[i], ps::Material::Si)) {
+                velocities.push_back(dis(gen));
+            } else {
+                velocities.push_back(0);
+            }
+        }
+
+        return ps::SmartPointer<std::vector<T>>::New(std::move(velocities));
+    }
+};
+
 // overwrite ImplantModel to describe implementation logic
 template <class NumericType, int D>
 class GaussianModel : public cs::ImplantModel<NumericType, D> {
@@ -46,7 +99,7 @@ public:
       NumericType sigma = params.get("sigma");
       const double pi = 3.14159265358979323846;
       return (1.0 / (sigma * std::sqrt(2 * pi))) *
-             std::exp(-0.5 * std::pow((depth - mu) / sigma, 2))*999;
+             std::exp(-0.5 * std::pow((depth - mu) / sigma, 2));
   }
 
 private:
@@ -79,36 +132,55 @@ private:
 };
 
 int main(int argc, char** argv) {
-  constexpr int D = 2;
-  using NumericType = double;
-  // Parsing the parameters
-  cs::util::Parameters params;
-  if (argc > 1) {
-      params.readConfigFile(argv[1]);
-  } else {
-      std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
-      return 1;
-  }
+    constexpr int D = 2;
+    using NumericType = double;
+    // Parsing the parameters
+    cs::util::Parameters params;
+    if (argc > 1) {
+        params.readConfigFile(argv[1]);
+    } else {
+        std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
+        return 1;
+    }
 
-  auto levelSet = makePlane<NumericType, D>(params.get("xExtent"), params.get("yExtent"), params.get("gridDelta"));
+  // creating trench/ mask cover
+  auto domain = ps::SmartPointer<ps::Domain<double, 2>>::New();
+  ps::MakeTrench<double,2>(domain, params.get("gridDelta"), 10, 3, 3, 0.1, 0., 2., false, true,
+                            ps::Material::Si).apply();
+  ps::Process<double, 2> process;
+  process.setDomain(domain);
+    //   auto model = ps::SmartPointer<ps::IsotropicProcess<double, 2>>::New(
+    //   -1., ps::Material::Mask);
+  auto etchingModel = ps::SmartPointer<ps::DirectionalEtching<double, 2>>::New(
+          ps::Vec3D<double>{0.5, -1., 0.}, 1., -0.1, ps::Material::Mask);
+  process.setProcessModel(etchingModel);
+  process.setProcessDuration(0.5);
+  process.apply();
 
-  auto materialMap = cs::SmartPointer<viennals::MaterialMap>::New();
-  materialMap->insertNextMaterial(0);
+  domain->saveSurfaceMesh("initial.vtp");
+  domain->generateCellSet(0.1, ps::Material::Si, true);
+  domain->getCellSet()->writeVTU("plane.vtu");
+  auto cellSet = domain->getCellSet();
 
-  auto cellSet = cs::SmartPointer<cs::DenseCellSet<NumericType, D>>::New();
-  cellSet->setCoverMaterial(0); //do I need this line?
-  cellSet->fromLevelSets({levelSet}, materialMap, params.get("depth"));
-  auto concentration = cellSet->addScalarData("concentration", 0);
+
+  //auto levelSet = makePlane<NumericType, D>(params.get("xExtent"), params.get("yExtent"), params.get("gridDelta"));
+  //auto materialMap = cs::SmartPointer<viennals::MaterialMap>::New();
+  //materialMap->insertNextMaterial(0);
+
+  //auto cellSet = cs::SmartPointer<cs::DenseCellSet<NumericType, D>>::New();
+  //cellSet->setCoverMaterial(0); //do I need this line?
+  //cellSet->fromLevelSets({levelSet}, materialMap, params.get("depth"));
+
 
   auto model = cs::SmartPointer<GaussianModel<NumericType, D>>::New(1.);
-
+  //auto concentration = cellSet->addScalarData("concentration", 0);
+  cellSet->addScalarData("concentration", 0);
   cs::Implant<double, D> implant;
   implant.setCellSet(cellSet);
   implant.setImplantModel(model);
   implant.setParameters(params);
-  implant.apply();
+  implant.apply(params);
 
   cellSet->writeVTU("final.vtu");
-
   return 0;
 }
