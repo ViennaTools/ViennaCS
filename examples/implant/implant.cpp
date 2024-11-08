@@ -149,31 +149,16 @@ int main(int argc, char** argv) {
                             ps::Material::Si).apply();
   ps::Process<double, 2> process;
   process.setDomain(domain);
-    //   auto model = ps::SmartPointer<ps::IsotropicProcess<double, 2>>::New(
-    //   -1., ps::Material::Mask);
   auto etchingModel = ps::SmartPointer<ps::DirectionalEtching<double, 2>>::New(
-          ps::Vec3D<double>{0.5, -1., 0.}, 1., -0.1, ps::Material::Mask);
+          ps::Vec3D<double>{0., -1., 0.}, 1., -0.1, ps::Material::Mask);
   process.setProcessModel(etchingModel);
   process.setProcessDuration(0.5);
   process.apply();
 
   domain->saveSurfaceMesh("initial.vtp");
   domain->generateCellSet(0.1, ps::Material::Si, true);
-  domain->getCellSet()->writeVTU("plane.vtu");
   auto cellSet = domain->getCellSet();
-
-
-  //auto levelSet = makePlane<NumericType, D>(params.get("xExtent"), params.get("yExtent"), params.get("gridDelta"));
-  //auto materialMap = cs::SmartPointer<viennals::MaterialMap>::New();
-  //materialMap->insertNextMaterial(0);
-
-  //auto cellSet = cs::SmartPointer<cs::DenseCellSet<NumericType, D>>::New();
-  //cellSet->setCoverMaterial(0); //do I need this line?
-  //cellSet->fromLevelSets({levelSet}, materialMap, params.get("depth"));
-
-
   auto model = cs::SmartPointer<GaussianModel<NumericType, D>>::New(1.);
-  //auto concentration = cellSet->addScalarData("concentration", 0);
   cellSet->addScalarData("concentration", 0);
   cs::Implant<double, D> implant;
   implant.setCellSet(cellSet);

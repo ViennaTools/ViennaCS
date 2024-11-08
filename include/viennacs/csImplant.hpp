@@ -55,20 +55,12 @@ void apply(util::Parameters params){
   auto material = cellSet_->getScalarData("Material");
   NumericType xLength = std::abs(boundingBox[1][0] - boundingBox[0][0]);
   NumericType yLength = std::abs(boundingBox[1][1] - boundingBox[0][1]);
-  std::cout << "xLength: " << xLength << std::endl;
-  std::cout << "yLength: " << yLength << std::endl;
   int numberOfcellsXdirection = xLength / gridDelta;
   int numberOfcellsYdirection = yLength / gridDelta;
-  std::cout << "X-cells: " << numberOfcellsXdirection << std::endl;
-  std::cout << "Y-cells: " << numberOfcellsYdirection << std::endl;
   double angle = params.get("angle");
-  double radians = angle * M_PI / 180; // pls always use fucking radians
+  double radians = angle * M_PI / 180;
 
-  // ToDo: it seems like the algorithm doesn't quite iterate over *all* cells
-  // ToDo: it also tries to acces some cells that don't even exist
   // iterate over all the beams that hit the x-plane from the y direction:
-  //toDo: take care of 'shadows'
-  // toDo: create rough surface
   for (int i = 0; i < numberOfcellsXdirection; i++){
       NumericType initialX = i*gridDelta - xLength / 2 + gridDelta;
       NumericType initialY = yLength - gridDelta;
@@ -106,8 +98,6 @@ void apply(util::Parameters params){
                           auto index = cellSet_->getIndex(coords);
                           if (index != -1){
                               (*concentration)[index] += model_->getDepthProfile(depth, params_) * model_->getLateralProfile(lateralDisplacement, depth, params_);
-                          } else {
-                              std::cout << "index miss @ [" << coords[0] << ", " << coords[1] << "] " << std::endl;
                           }
                       }
                   }

@@ -1,3 +1,3 @@
 gridDelta=1
-xExtent=50
+xExtent=5
 yExtent=15
