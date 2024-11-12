@@ -131,6 +131,39 @@ private:
     const NumericType a_ = 1;
 };
 
+template <class NumericType, int D>
+class DualPearsonModel : public cs::ImplantModel<NumericType, D> {
+public:
+    DualPearsonModel(const NumericType a) : a_(a) {};
+    NumericType getDepthProfile(NumericType depth, cs::util::Parameters params) override {
+        NumericType mu1 = params.get("mu1");
+        NumericType mu2 = params.get("mu2");
+        NumericType sigma1 = params.get("sigma1");
+        NumericType sigma2 = params.get("sigma2");
+        NumericType gamma1 = params.get("gamma1");
+        NumericType gamma2 = params.get("gamma2");
+        NumericType beta1 = params.get("beta1");
+        NumericType beta2 = params.get("beta2");
+        NumericType r = params.get("r");
+        return (1-r)* singlePearsonIV(depth, mu1, sigma1, gamma1, beta1) + r * singlePearsonIV(depth, mu2, sigma2, gamma2, beta2);
+    }
+
+    NumericType singlePearsonIV(NumericType depth, NumericType mu, NumericType sigma, NumericType gamma, NumericType beta){
+        depth  = depth-mu;
+        NumericType A = 10*beta - 12*gamma*gamma - 18;
+        NumericType a = -gamma*sigma*(beta + 3) / A;
+        NumericType b_0 = -sigma*sigma*(4*beta-3*gamma*gamma) / A;
+        NumericType b_1 = a;
+        NumericType b_2 = -(2*beta - 3*gamma*gamma - 6) / A;
+        NumericType m = 1/(2*b_2);
+        return pow(abs(b_0+b_1*depth+b_2*depth * depth), m) * exp((-(b_1 / b_2 + 2*a) /
+                                                                   sqrt(4*b_0*b_2 - b_1*b_1)) * atan((2*b_2*depth + b_1) / sqrt(4*b_0*b_2 - b_1*b_1)));
+    }
+private:
+    const NumericType a_ = 1;
+};
+
+
 int main(int argc, char** argv) {
     constexpr int D = 2;
     using NumericType = double;
@@ -145,14 +178,14 @@ int main(int argc, char** argv) {
 
   // creating trench/ mask cover
   auto domain = ps::SmartPointer<ps::Domain<double, 2>>::New();
-  ps::MakeTrench<double,2>(domain, params.get("gridDelta"), 10, 3, 3, 0.1, 0., 2., false, true,
+  ps::MakeTrench<double,2>(domain, params.get("gridDelta"), 10, 3, 0.5, 0.1, 0., 2., false, true,
                             ps::Material::Si).apply();
   ps::Process<double, 2> process;
   process.setDomain(domain);
   auto etchingModel = ps::SmartPointer<ps::DirectionalEtching<double, 2>>::New(
           ps::Vec3D<double>{0., -1., 0.}, 1., -0.1, ps::Material::Mask);
   process.setProcessModel(etchingModel);
-  process.setProcessDuration(0.5);
+  process.setProcessDuration(0.1);
   process.apply();
 
   domain->saveSurfaceMesh("initial.vtp");
