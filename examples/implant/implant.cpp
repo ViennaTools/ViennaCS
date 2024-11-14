@@ -177,12 +177,12 @@ int main(int argc, char** argv) {
     }
 
   // creating trench/ mask cover
-  auto domain = ps::SmartPointer<ps::Domain<double, 2>>::New();
-  ps::MakeTrench<double,2>(domain, params.get("gridDelta"), 10, 3, 0.5, 0.1, 0., 2., false, true,
+  auto domain = ps::SmartPointer<ps::Domain<double, D>>::New();
+  ps::MakeTrench<double,D>(domain, params.get("gridDelta"), 5, 5, 1, 1, 0., 4., false, true,
                             ps::Material::Si).apply();
-  ps::Process<double, 2> process;
+  ps::Process<double, D> process;
   process.setDomain(domain);
-  auto etchingModel = ps::SmartPointer<ps::DirectionalEtching<double, 2>>::New(
+  auto etchingModel = ps::SmartPointer<ps::DirectionalEtching<double, D>>::New(
           ps::Vec3D<double>{0., -1., 0.}, 1., -0.1, ps::Material::Mask);
   process.setProcessModel(etchingModel);
   process.setProcessDuration(0.1);
