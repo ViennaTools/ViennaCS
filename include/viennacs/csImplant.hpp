@@ -2,7 +2,7 @@
 #pragma once
 
 #include <csDenseCellSet.hpp>
-#include <csImplantModel.hpp>
+#include "csImplantModel.hpp"
 
 #include <vcLogger.hpp>
 #include <random>
@@ -156,7 +156,6 @@ void apply(util::Parameters params){
                               //std::cout << "coord: [" << shifted_xCord << ", " << shifted_yCord << "]" <<std::endl;
                               NumericType depth = std::cos(radians) * yCord + std::sin(radians) * (initialX - shifted_xCord);
                               NumericType lateralDisplacement = std::abs(std::cos(radians)*(initialX - shifted_xCord) - std::sin(radians) * yCord);
-
                               std::array<NumericType, 3> coords{shifted_xCord, shifted_yCord, 0};
                               auto index = cellSet_->getIndex(coords);
                               if (index != -1){
@@ -171,5 +170,4 @@ void apply(util::Parameters params){
   }
   }
 };
-
 } // namespace viennacs
