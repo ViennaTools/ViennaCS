@@ -12,9 +12,9 @@ int main() {
   constexpr int D = 2;
 
   // two plane geometries
-  ls::BoundaryConditionEnum<D> boundaryConds[D] = {
-      ls::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY,
-      ls::BoundaryConditionEnum<D>::INFINITE_BOUNDARY};
+  ls::BoundaryConditionEnum boundaryConds[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
   T bounds[2 * D] = {-1., 1., -1., 1.};
   T gridDelta = 0.2;
 

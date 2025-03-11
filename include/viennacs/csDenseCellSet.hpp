@@ -259,7 +259,7 @@ public:
   }
 
   std::vector<T> *addScalarData(std::string name, T initValue = 0.) {
-    if (cellGrid->getCellData().getScalarData(name) != nullptr) {
+    if (cellGrid->getCellData().getScalarData(name, false) != nullptr) {
       auto data = cellGrid->getCellData().getScalarData(name);
       data->resize(numberOfCells, initValue);
       std::fill(data->begin(), data->end(), initValue);

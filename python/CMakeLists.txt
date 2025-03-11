@@ -12,15 +12,15 @@ add_custom_target(${PROJECT_NAME} ALL)
 set(CMAKE_MACOSX_RPATH ON)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 
-if(NOT APPLE)
-  list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN")
-  list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN/../vtkmodules")
-  list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN/../viennacs.libs")
-else()
-  list(APPEND CMAKE_INSTALL_RPATH "@loader_path")
-  list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../vtkmodules")
-  list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../viennacs.libs")
-endif()
+if (NOT APPLE)
+    list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN")
+    list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN/../vtkmodules")
+    list(APPEND CMAKE_INSTALL_RPATH "$ORIGIN/../viennacs.libs")
+else ()
+    list(APPEND CMAKE_INSTALL_RPATH "@loader_path")
+    list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../vtkmodules")
+    list(APPEND CMAKE_INSTALL_RPATH "@loader_path/../viennacs.libs")
+endif ()
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Dependencies
@@ -31,9 +31,9 @@ include("../cmake/cpm.cmake")
 set(PYBIND11_FINDPYTHON ON)
 
 CPMFindPackage(
-  NAME pybind11
-  VERSION 2.11.1
-  GIT_REPOSITORY "https://github.com/pybind/pybind11")
+        NAME pybind11
+        VERSION 2.12.0
+        GIT_REPOSITORY "https://github.com/pybind/pybind11")
 
 # --------------------------------------------------------------------------------------------------------
 # Constants
@@ -42,10 +42,10 @@ CPMFindPackage(
 set(VIENNACS_PYTHON_MODULE_NAME "viennacs")
 set(VIENNACS_LIBRARY_OUTPUT_DIR ${CMAKE_BINARY_DIR})
 
-if(CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-  set(VIENNACS_LIBRARY_OUTPUT_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
-  message(STATUS "[ViennaCS] Using Library Output Directory for bindings")
-endif()
+if (CMAKE_LIBRARY_OUTPUT_DIRECTORY)
+    set(VIENNACS_LIBRARY_OUTPUT_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
+    message(STATUS "[ViennaCS] Using Library Output Directory for bindings")
+endif ()
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Bindings
@@ -58,9 +58,9 @@ target_link_libraries(viennacs2d PRIVATE ViennaCS)
 target_link_libraries(viennacs3d PRIVATE ViennaCS)
 
 target_compile_definitions(viennacs2d PRIVATE -DVIENNACS_PYTHON_DIMENSION=2
-                                              -DVIENNACS_MODULE_NAME=viennacs2d)
+        -DVIENNACS_MODULE_NAME=viennacs2d)
 target_compile_definitions(viennacs3d PRIVATE -DVIENNACS_PYTHON_DIMENSION=3
-                                              -DVIENNACS_MODULE_NAME=viennacs3d)
+        -DVIENNACS_MODULE_NAME=viennacs3d)
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Lib-Folder
@@ -69,12 +69,11 @@ target_compile_definitions(viennacs3d PRIVATE -DVIENNACS_PYTHON_DIMENSION=3
 set(VIENNACS_LIB_FOLDER "${VIENNACS_LIBRARY_OUTPUT_DIR}/viennacs.libs")
 
 # Not required for both targets, one will suffice
-
-setup_embree_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
-setup_vtk_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
-setup_tbb_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
+viennacore_setup_embree_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
+viennacore_setup_vtk_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
+viennacore_setup_tbb_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
 
 install(
-  DIRECTORY "${VIENNACS_LIB_FOLDER}"
-  DESTINATION .
-  OPTIONAL)
+        DIRECTORY "${VIENNACS_LIB_FOLDER}"
+        DESTINATION .
+        OPTIONAL)

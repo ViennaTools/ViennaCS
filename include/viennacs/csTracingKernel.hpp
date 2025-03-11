@@ -59,11 +59,10 @@ public:
       alignas(128) auto rayHit =
           RTCRayHit{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-      const int threadID = omp_get_thread_num();
       unsigned int seed = mRunNumber;
       if (mUseRandomSeeds) {
         std::random_device rd;
-        seed = static_cast<unsigned int>(rd());
+        seed = rd();
       }
 
       // thread-local particle object
@@ -88,8 +87,8 @@ public:
         particle->initNew(RngState);
 
         auto originAndDirection = mSource.getOriginAndDirection(idx, RngState);
-        rayInternal::fillRay(rayHit.ray, originAndDirection[0],
-                             originAndDirection[1]);
+        rayInternal::fillRayPosition(rayHit.ray, originAndDirection[0]);
+        rayInternal::fillRayDirection(rayHit.ray, originAndDirection[1]);
 
 #ifdef VIENNARAY_USE_RAY_MASKING
         rayHit.ray.mask = -1;
@@ -211,7 +210,8 @@ public:
           }
 
           // Update ray direction and origin
-          rayInternal::fillRay(rayHit.ray, hitPoint, fillnDirection.second);
+          rayInternal::fillRayPosition(rayHit.ray, hitPoint);
+          rayInternal::fillRayDirection(rayHit.ray, fillnDirection.second);
 
         } while (reflect);
       } // end ray tracing for loop

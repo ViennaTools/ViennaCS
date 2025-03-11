@@ -153,7 +153,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
            "below the old surface as this function can only remove cells from "
            "the cell set.")
       .def("buildNeighborhood", &DenseCellSet<T, D>::buildNeighborhood,
-           "Generate fast neighbor access for each cell.")
+           "Generate fast neighbor access for each cell.",
+           pybind11::arg("forceRebuild") = false)
       .def("getNeighbors", &DenseCellSet<T, D>::getNeighbors,
            "Get the neighbor indices for a cell.");
 

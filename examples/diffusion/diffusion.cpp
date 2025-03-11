@@ -66,10 +66,10 @@ auto makeStructure(const Parameters<T> &params, materialMapType matMap) {
   const T coverHeight = params.coverHeight;
   const T maskHeight = params.maskHeight;
   const T holeRadius = params.holeRadius;
-  ls::BoundaryConditionEnum<D> boundaryConds[D] = {
-      ls::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY,
-      ls::BoundaryConditionEnum<D>::REFLECTIVE_BOUNDARY};
-  boundaryConds[D - 1] = ls::BoundaryConditionEnum<D>::INFINITE_BOUNDARY;
+  ls::BoundaryConditionEnum boundaryConds[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY};
+  boundaryConds[D - 1] = ls::BoundaryConditionEnum::INFINITE_BOUNDARY;
   T bounds[2 * D] = {-params.xExtent / 2., params.xExtent / 2.,
                      -params.yExtent / 2., params.yExtent / 2.};
   bounds[2 * D - 2] = 0.;
