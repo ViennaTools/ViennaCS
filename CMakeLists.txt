@@ -74,6 +74,7 @@ include("cmake/cpm.cmake")
 CPMAddPackage(
         NAME ViennaCore
         VERSION 1.3.0
+        GIT_TAG parameter-file
         GIT_REPOSITORY "https://github.com/ViennaTools/ViennaCore"
         OPTIONS "VIENNACORE_FORMAT_EXCLUDE docs/")
 

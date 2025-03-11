@@ -51,7 +51,7 @@ private:
   const T eps = 1e-4;
 
 public:
-  DenseCellSet() {}
+  DenseCellSet() = default;
 
   DenseCellSet(levelSetsType passedLevelSets,
                materialMapType passedMaterialMap = nullptr, T passedDepth = 0.,
