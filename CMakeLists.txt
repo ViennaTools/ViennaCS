@@ -73,7 +73,7 @@ include("cmake/cpm.cmake")
 
 CPMAddPackage(
   NAME ViennaCore
-  VERSION 1.4.0
+  VERSION 1.4.3
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaCore")
 
 CPMAddPackage(
@@ -84,13 +84,13 @@ CPMAddPackage(
 
 CPMFindPackage(
   NAME ViennaRay
-  VERSION 3.4.0
+  VERSION 3.4.1
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaRay"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 
 CPMFindPackage(
   NAME ViennaLS
-  VERSION 4.3.0
+  VERSION 4.3.2
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaLS"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 

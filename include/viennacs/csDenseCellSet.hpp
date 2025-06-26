@@ -6,6 +6,7 @@
 #include <lsDomain.hpp>
 #include <lsMakeGeometry.hpp>
 #include <lsMesh.hpp>
+#include <lsToMesh.hpp>
 #include <lsToSurfaceMesh.hpp>
 #include <lsToVoxelMesh.hpp>
 #include <lsVTKWriter.hpp>
@@ -35,7 +36,7 @@ private:
   SmartPointer<BVH<T, D>> bvh = nullptr;
   materialMapType materialMap = nullptr;
 
-  T gridDelta;
+  T gridDelta_;
   T depth = 0.;
   size_t numberOfCells = 0;
   int BVHlayers = 0;
@@ -49,6 +50,7 @@ private:
 
   std::vector<T> *fillingFractions_;
   const T eps = 1e-4;
+  constexpr static int numCorners = 1 << D; // 2^D corners for a cell
 
 public:
   DenseCellSet() = default;
@@ -74,7 +76,7 @@ public:
     else
       surface->deepCopy(levelSets.back());
 
-    gridDelta = surface->getGrid().getGridDelta();
+    gridDelta_ = surface->getGrid().getGridDelta();
 
     depth = passedDepth;
     auto levelSetsInOrder = getLevelSetsInOrder();
@@ -123,17 +125,37 @@ public:
 
         cellIt.goToIndicesSequential(iterators.front().getIndices());
 
+        unsigned signs = 0;
+        T ff = 0.;
+        for (int i = 0; i < (1 << D); i++) {
+          if (cellIt.getCorner(i).getValue() >= T(0))
+            signs |= (1 << i);
+        }
+        bool sameSign = (signs == 0 || signs == (1 << (1 << D)) - 1);
+
         // find out whether the centre of the box is inside
         double centerValue = 0.;
-        for (int i = 0; i < (1 << D); ++i) {
-          centerValue += cellIt.getCorner(i).getValue();
+        const double epsH = 1.;
+        for (int i = 0; i < numCorners; ++i) {
+          auto value = cellIt.getCorner(i).getValue();
+          centerValue += value;
+          if (!sameSign) {
+            // we are at an interface, so we need to calculate the filling
+            // fraction
+            if (std::abs(value) <= epsH) {
+              ff += 0.5 *
+                    (1 + value / epsH + std::sin(M_PI * value / epsH) / M_PI);
+            } else if (value > epsH) {
+              ff += 1.;
+            }
+          }
         }
 
-        if (centerValue <= 0.) {
-          std::array<unsigned, 1 << D> voxel;
+        if (centerValue <= 0. || !sameSign) {
+          std::array<unsigned, numCorners> voxel;
           bool addVoxel = false;
           // now insert all points of voxel into pointList
-          for (unsigned i = 0; i < (1 << D); ++i) {
+          for (unsigned i = 0; i < numCorners; ++i) {
             viennahrle::Index<D> index;
             addVoxel = true;
             for (unsigned j = 0; j < D; ++j) {
@@ -174,7 +196,11 @@ public:
               cellGrid->tetras.push_back(tetra);
             }
             materialIds.push_back(material);
-            fillingFractions.push_back(std::max(1., centerValue));
+            if (sameSign) {
+              fillingFractions.push_back(1.);
+            } else {
+              fillingFractions.push_back(1 - ff / numCorners);
+            }
           }
           // jump out of material for loop
           break;
@@ -187,7 +213,7 @@ public:
     for (auto it = pointIdMapping.begin(); it != pointIdMapping.end(); ++it) {
       std::array<T, 3> coords{};
       for (unsigned i = 0; i < D; ++i) {
-        coords[i] = gridDelta * it->first[i];
+        coords[i] = gridDelta_ * it->first[i];
 
         // save extent
         if (coords[i] < cellGrid->minimumExtent[i]) {
@@ -203,7 +229,7 @@ public:
     int db_ls = 0;
     for (auto &ls : levelSetsInOrder) {
       auto mesh = SmartPointer<viennals::Mesh<T>>::New();
-      viennals::ToSurfaceMesh<T, D>(ls, mesh).apply();
+      viennals::ToMesh<T, D>(ls, mesh).apply();
       viennals::VTKWriter<T>(mesh, "cellSet_debug_" + std::to_string(db_ls++) +
                                        ".vtp")
           .apply();
@@ -216,7 +242,7 @@ public:
         cellGrid->getCellData().getScalarData("FillingFraction");
 
     // create filling fractions as default scalar cell data
-    numberOfCells = cellGrid->template getElements<(1 << D)>().size();
+    numberOfCells = cellGrid->template getElements<numCorners>().size();
 
     // calculate number of BVH layers
     for (unsigned i = 0; i < D; ++i) {
@@ -231,7 +257,7 @@ public:
                                           cellGrid->minimumExtent[2]);
 
     BVHlayers = 0;
-    while (minExtent / 2 > gridDelta) {
+    while (minExtent / 2 > gridDelta_) {
       BVHlayers++;
       minExtent /= 2;
     }
@@ -270,7 +296,7 @@ public:
 
   T getDepth() const { return depth; }
 
-  T getGridDelta() const { return gridDelta; }
+  T getGridDelta() const { return gridDelta_; }
 
   std::vector<Vec3D<T>> &getNodes() const { return cellGrid->getNodes(); }
 
@@ -278,12 +304,12 @@ public:
     return cellGrid->getNodes()[idx];
   }
 
-  std::vector<std::array<unsigned, (1 << D)>> &getElements() const {
-    return cellGrid->template getElements<(1 << D)>();
+  std::vector<std::array<unsigned, numCorners>> &getElements() const {
+    return cellGrid->template getElements<numCorners>();
   }
 
-  const std::array<unsigned, (1 << D)> &getElement(unsigned int idx) const {
-    return cellGrid->template getElements<(1 << D)>()[idx];
+  const std::array<unsigned, numCorners> &getElement(unsigned int idx) const {
+    return cellGrid->template getElements<numCorners>()[idx];
   }
 
   SmartPointer<viennals::Domain<T, D>> getSurface() { return surface; }
@@ -312,10 +338,10 @@ public:
     T sum = 0.;
     int count = 0;
     for (int i = 0; i < numberOfCells; i++) {
-      auto &cell = cellGrid->template getElements<(1 << D)>()[i];
+      auto &cell = cellGrid->template getElements<numCorners>()[i];
       auto node = cellGrid->getNodes()[cell[0]];
       for (int j = 0; j < D; j++)
-        node[j] += gridDelta / 2.;
+        node[j] += gridDelta_ / 2.;
       if (Distance(node, point) < radius) {
         sum += fillingFractions_->at(i);
         count++;
@@ -327,9 +353,9 @@ public:
   Vec3D<T> getCellCenter(unsigned long idx) const {
     auto center =
         cellGrid
-            ->getNodes()[cellGrid->template getElements<(1 << D)>()[idx][0]];
+            ->getNodes()[cellGrid->template getElements<numCorners>()[idx][0]];
     for (int i = 0; i < D; i++)
-      center[i] += gridDelta / 2.;
+      center[i] += gridDelta_ / 2.;
     return center;
   }
 
@@ -457,14 +483,14 @@ public:
     }
 
     std::vector<std::vector<T> *> cellDataP;
-    for (auto & label : labels) {
+    for (auto &label : labels) {
       auto dataP = getScalarData(label);
       if (dataP == nullptr) {
         addScalarData(label, 0.);
       }
     }
 
-    for (auto & label : labels) {
+    for (auto &label : labels) {
       cellDataP.push_back(getScalarData(label));
     }
 
@@ -522,14 +548,14 @@ public:
 
         // find out whether the centre of the box is inside
         T centerValue = 0.;
-        for (int i = 0; i < (1 << D); ++i) {
+        for (int i = 0; i < numCorners; ++i) {
           centerValue += cellIt.getCorner(i).getValue();
         }
 
         if (centerValue <= 0.) {
           bool isVoxel = true;
           // check if voxel is in bounds
-          for (unsigned i = 0; i < (1 << D) && isVoxel; ++i) {
+          for (unsigned i = 0; i < numCorners && isVoxel; ++i) {
             viennahrle::Index<D> index;
             for (unsigned j = 0; j < D; ++j) {
               index[j] =
@@ -583,10 +609,10 @@ public:
     voxelConverter.apply();
 
     auto cutMatIds = updateCellGrid->getCellData().getScalarData("Material");
-    auto &elements = cellGrid->template getElements<(1 << D)>();
+    auto &elements = cellGrid->template getElements<numCorners>();
 
     const auto nCutCells =
-        updateCellGrid->template getElements<(1 << D)>().size();
+        updateCellGrid->template getElements<numCorners>().size();
 
     auto numScalarData = cellGrid->getCellData().getScalarDataSize();
 
@@ -628,7 +654,7 @@ public:
 
     Timer timer;
     timer.start();
-    const auto &cells = cellGrid->template getElements<(1 << D)>();
+    const auto &cells = cellGrid->template getElements<numCorners>();
     const auto &nodes = cellGrid->getNodes();
     unsigned const numNodes = nodes.size();
     unsigned const numCells = cells.size();
@@ -639,7 +665,7 @@ public:
 
     // for each node, store which cells are connected with the node
     for (unsigned cellIdx = 0; cellIdx < numCells; cellIdx++) {
-      for (unsigned cellNodeIdx = 0; cellNodeIdx < (1 << D); cellNodeIdx++) {
+      for (unsigned cellNodeIdx = 0; cellNodeIdx < numCorners; cellNodeIdx++) {
         nodeCellConnections[cells[cellIdx][cellNodeIdx]].push_back(cellIdx);
       }
     }
@@ -648,7 +674,7 @@ public:
     for (int cellIdx = 0; cellIdx < numCells; cellIdx++) {
       auto coord = nodes[cells[cellIdx][0]];
       for (int i = 0; i < D; i++) {
-        coord[i] += gridDelta / 2.;
+        coord[i] += gridDelta_ / 2.;
         cellNeighbors[cellIdx][i] = -1;
         cellNeighbors[cellIdx][i + D] = -1;
       }
@@ -665,13 +691,13 @@ public:
               // wrap around boundary
               if (!minBoundary) {
                 neighborCoord[i / 2] =
-                    cellGrid->minimumExtent[i / 2] + gridDelta / 2.;
+                    cellGrid->minimumExtent[i / 2] + gridDelta_ / 2.;
               } else {
                 neighborCoord[i / 2] =
-                    cellGrid->maximumExtent[i / 2] - gridDelta / 2.;
+                    cellGrid->maximumExtent[i / 2] - gridDelta_ / 2.;
               }
             } else {
-              neighborCoord[i / 2] += minBoundary ? -gridDelta : gridDelta;
+              neighborCoord[i / 2] += minBoundary ? -gridDelta_ : gridDelta_;
             }
             cellNeighbors[cellIdx][i] = findIndex(neighborCoord);
           }
@@ -679,7 +705,7 @@ public:
         }
       }
 
-      for (unsigned cellNodeIdx = 0; cellNodeIdx < (1 << D); cellNodeIdx++) {
+      for (unsigned cellNodeIdx = 0; cellNodeIdx < numCorners; cellNodeIdx++) {
         auto &cellsAtNode = nodeCellConnections[cells[cellIdx][cellNodeIdx]];
 
         for (const auto &neighborCell : cellsAtNode) {
@@ -687,12 +713,12 @@ public:
 
             auto neighborCoord = getCellCenter(neighborCell);
 
-            if (Distance(coord, neighborCoord) < gridDelta + eps) {
+            if (Distance(coord, neighborCoord) < gridDelta_ + eps) {
 
               for (int i = 0; i < D; i++) {
-                if (coord[i] - neighborCoord[i] > gridDelta / 2.) {
+                if (coord[i] - neighborCoord[i] > gridDelta_ / 2.) {
                   cellNeighbors[cellIdx][i * 2] = neighborCell;
-                } else if (coord[i] - neighborCoord[i] < -gridDelta / 2.) {
+                } else if (coord[i] - neighborCoord[i] < -gridDelta_ / 2.) {
                   cellNeighbors[cellIdx][i * 2 + 1] = neighborCell;
                 }
               }
@@ -721,7 +747,7 @@ public:
 
 private:
   int findIndex(const Vec3D<T> &point) const {
-    const auto &elems = cellGrid->template getElements<(1 << D)>();
+    const auto &elems = cellGrid->template getElements<numCorners>();
     const auto &nodes = cellGrid->getNodes();
     int idx = -1;
 
@@ -787,7 +813,7 @@ private:
     if (idx > 0)
       return idx;
 
-    auto moveDirection = multNew(direction, gridDelta / 2.);
+    auto moveDirection = multNew(direction, gridDelta_ / 2.);
     size_t sanityCounter = 0;
     while (idx < 0) {
       add(hitPoint, moveDirection);
@@ -802,23 +828,23 @@ private:
 
   bool isPointInCell(const Vec3D<T> &point, const Vec3D<T> &cellMin) const {
     if constexpr (D == 3)
-      return point[0] >= cellMin[0] && point[0] <= (cellMin[0] + gridDelta) &&
-             point[1] >= cellMin[1] && point[1] <= (cellMin[1] + gridDelta) &&
-             point[2] >= cellMin[2] && point[2] <= (cellMin[2] + gridDelta);
+      return point[0] >= cellMin[0] && point[0] <= (cellMin[0] + gridDelta_) &&
+             point[1] >= cellMin[1] && point[1] <= (cellMin[1] + gridDelta_) &&
+             point[2] >= cellMin[2] && point[2] <= (cellMin[2] + gridDelta_);
     else
-      return point[0] >= cellMin[0] && point[0] <= (cellMin[0] + gridDelta) &&
-             point[1] >= cellMin[1] && point[1] <= (cellMin[1] + gridDelta);
+      return point[0] >= cellMin[0] && point[0] <= (cellMin[0] + gridDelta_) &&
+             point[1] >= cellMin[1] && point[1] <= (cellMin[1] + gridDelta_);
   }
 
   void buildBVH() {
     Timer timer;
     timer.start();
-    auto &elems = cellGrid->template getElements<(1 << D)>();
+    auto &elems = cellGrid->template getElements<numCorners>();
     auto &nodes = cellGrid->getNodes();
     bvh->clearCellIds();
 
     for (size_t elemIdx = 0; elemIdx < elems.size(); elemIdx++) {
-      for (size_t n = 0; n < (1 << D); n++) {
+      for (size_t n = 0; n < numCorners; n++) {
         auto &node = nodes[elems[elemIdx][n]];
         auto cell = bvh->getCellIds(node);
         if (cell == nullptr) {
@@ -861,11 +887,11 @@ private:
     for (int i = 0; i < 2 * D; i += 2) {
       if (!periodicBoundary[i / 2])
         continue;
-      if (cellCoord[i / 2] - cellGrid->minimumExtent[i / 2] < gridDelta) {
+      if (cellCoord[i / 2] - cellGrid->minimumExtent[i / 2] < gridDelta_) {
         /* cell is at min boundary */
         onBoundary.set(i);
       }
-      if (cellGrid->maximumExtent[i / 2] - cellCoord[i / 2] < gridDelta) {
+      if (cellGrid->maximumExtent[i / 2] - cellCoord[i / 2] < gridDelta_) {
         /* cell is at max boundary */
         onBoundary.set(i + 1);
       }
