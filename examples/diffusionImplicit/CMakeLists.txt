@@ -1,4 +1,12 @@
-project(diffusion LANGUAGES CXX)
+find_package (Eigen3 3.3 NO_MODULE)
+
+if(NOT TARGET Eigen3::Eigen)
+  message(STATUS "[ViennaCS] Eigen library not found, skipping example")
+  return()
+endif()
+
+
+project(diffusionImplicit LANGUAGES CXX)
 
 add_executable(${PROJECT_NAME} "${PROJECT_NAME}.cpp")
 target_link_libraries(${PROJECT_NAME} PRIVATE ViennaCS)

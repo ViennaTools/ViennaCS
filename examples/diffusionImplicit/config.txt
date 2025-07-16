@@ -1,0 +1,20 @@
+# Domain
+gridDelta = 1.2  # nm
+xExtent = 85     # nm
+yExtent = 50     # nm
+
+# Geometry
+substrateHeight = 50  # nm
+coverHeight = 8
+maskHeight = 10
+holeRadius = 13.3
+
+# Process
+duration = 110              # s
+diffusionCoefficient = 1    # nm²/s
+velocity = 0                # Advection (not implemented)
+boundaryValue = 1
+timeStabilityFactor = 0.95  # Stable below 1 (explicit scheme)
+
+
+numThreads = 4

@@ -160,7 +160,7 @@ public:
           if (addVoxel) {
             int material = materialId;
             if (useMaterialMap)
-              material = materialMap->getMaterialId(materialId);
+              material = indexToMaterial(materialId, materialMap);
 
             if constexpr (D == 3) {
               // reorder elements for hexas to be ordered correctly
@@ -211,7 +211,7 @@ public:
     viennals::VTKWriter<T>(cellGrid, "cellSet_debug_init.vtu").apply();
 #endif
 
-    adjustMaterialIds();
+    // adjustMaterialIds();
     fillingFractions_ =
         cellGrid->getCellData().getScalarData("FillingFraction");
 
@@ -457,14 +457,14 @@ public:
     }
 
     std::vector<std::vector<T> *> cellDataP;
-    for (auto & label : labels) {
+    for (auto &label : labels) {
       auto dataP = getScalarData(label);
       if (dataP == nullptr) {
         addScalarData(label, 0.);
       }
     }
 
-    for (auto & label : labels) {
+    for (auto &label : labels) {
       cellDataP.push_back(getScalarData(label));
     }
 
@@ -738,6 +738,7 @@ private:
   }
 
   void adjustMaterialIds() {
+    // This assumes the current material IDs correspond to the level-set index
     auto matIds = getScalarData("Material");
     if (!materialMap)
       return;
