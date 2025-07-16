@@ -199,7 +199,7 @@ public:
             if (sameSign) {
               fillingFractions.push_back(1.);
             } else {
-              fillingFractions.push_back(1 - ff / numCorners);
+              fillingFractions.push_back(1. - ff / numCorners);
             }
           }
           // jump out of material for loop

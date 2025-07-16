@@ -24,6 +24,14 @@ int main() {
   T radius = 0.5;
   ls::MakeGeometry<T, D>(sphere, ls::Sphere<T, D>::New(center, radius)).apply();
 
+  auto mesh = ls::Mesh<T>::New();
+  ls::ToMesh<T, D>(sphere, mesh).apply();
+  ls::VTKWriter<T>(mesh, "sphere_2.vtp").apply();
+
+  ls::Expand<T, D>(sphere, 3).apply();
+  ls::ToMesh<T, D>(sphere, mesh).apply();
+  ls::VTKWriter<T>(mesh, "sphere_3.vtp").apply();
+
   auto levelSets = std::vector<ls::SmartPointer<ls::Domain<T, D>>>{};
   levelSets.push_back(sphere);
 
