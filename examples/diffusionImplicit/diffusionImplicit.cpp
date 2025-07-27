@@ -1,8 +1,14 @@
+/**
+  This example requires the Eigen library to be available, either by installing
+  it on the system or by passing a custom install location to the build system
+  (VIENNACS_LOOKUP_DIRS)
+*/
+
 #include <csDenseCellSet.hpp>
 
-#include <eigen3/Eigen/SparseCholesky>
-#include <eigen3/Eigen/SparseCore>
-#include <eigen3/Eigen/SparseLU>
+#include <Eigen/SparseCholesky>
+#include <Eigen/SparseCore>
+#include <Eigen/SparseLU>
 
 #include "geometry.hpp"
 
