@@ -3,8 +3,8 @@ requires = ["scikit-build-core", "pybind11"]
 build-backend = "scikit_build_core.build"
 
 [project]
-version = "1.1.0"
-name = "ViennaCS_Python"
+version = "1.1.1"
+name = "ViennaCS"
 readme = "README.md"
 license = {file = "LICENSE"}
 description = "Semiconductor fabrication process simulation library"

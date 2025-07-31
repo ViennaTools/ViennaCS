@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 project(
   ViennaCS
   LANGUAGES CXX
-  VERSION 1.1.0)
+  VERSION 1.1.1)
 
 # --------------------------------------------------------------------------------------------------------
 # Library options
@@ -48,24 +48,6 @@ target_include_directories(
                             $<INSTALL_INTERFACE:include/viennacs-${PROJECT_VERSION}>)
 
 # --------------------------------------------------------------------------------------------------------
-# Check whether or not dependencies are installed on the system
-# └ VTK requires C Language support (HDF5)
-# --------------------------------------------------------------------------------------------------------
-
-enable_language(C)
-
-find_package(ViennaRay QUIET)
-find_package(ViennaLS QUIET)
-
-set(VIENNACS_SYSTEM_VIENNARAY
-    ${ViennaRay_FOUND}
-    CACHE INTERNAL "")
-
-set(VIENNACS_SYSTEM_VIENNALS
-    ${ViennaLS_FOUND}
-    CACHE INTERNAL "")
-
-# --------------------------------------------------------------------------------------------------------
 # Setup Dependencies
 # --------------------------------------------------------------------------------------------------------
 
@@ -73,7 +55,7 @@ include("cmake/cpm.cmake")
 
 CPMAddPackage(
   NAME ViennaCore
-  VERSION 1.4.0
+  VERSION 1.5.0
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaCore")
 
 CPMAddPackage(
@@ -84,13 +66,13 @@ CPMAddPackage(
 
 CPMFindPackage(
   NAME ViennaRay
-  VERSION 3.4.0
+  VERSION 3.4.2
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaRay"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 
 CPMFindPackage(
   NAME ViennaLS
-  VERSION 4.3.0
+  VERSION 4.4.0
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaLS"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 
