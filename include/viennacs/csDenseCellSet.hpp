@@ -268,6 +268,20 @@ public:
     return cellGrid->getCellData().getScalarData(name);
   }
 
+  std::vector<std::array<T, 3>> *addVectorData(std::string name,
+                                               std::array<T, 3> initValue = {
+                                                   0., 0., 0.}) {
+    if (cellGrid->getCellData().getVectorData(name, false) != nullptr) {
+      auto data = cellGrid->getCellData().getVectorData(name);
+      data->resize(numberOfCells, initValue);
+      std::fill(data->begin(), data->end(), initValue);
+      return data;
+    }
+    std::vector<std::array<T, 3>> newData(numberOfCells, initValue);
+    cellGrid->getCellData().insertNextVectorData(std::move(newData), name);
+    return cellGrid->getCellData().getVectorData(name);
+  }
+
   T getDepth() const { return depth; }
 
   T getGridDelta() const { return gridDelta; }
@@ -337,6 +351,10 @@ public:
 
   std::vector<T> *getScalarData(std::string name) {
     return cellGrid->getCellData().getScalarData(name);
+  }
+
+  std::vector<std::array<T, 3>> *getVectorData(std::string name) {
+    return cellGrid->getCellData().getVectorData(name);
   }
 
   std::vector<std::string> getScalarDataLabels() const {
