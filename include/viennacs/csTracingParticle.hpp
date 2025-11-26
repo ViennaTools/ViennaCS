@@ -42,15 +42,15 @@ public:
   }
   void initNew(RNG &rng) override {}
   std::pair<T, Vec3D<T>> surfaceHit(const Vec3D<T> &rayDir,
-                                            const Vec3D<T> &geomNormal,
-                                            bool &reflect, RNG &rng) override {
+                                    const Vec3D<T> &geomNormal, bool &reflect,
+                                    RNG &rng) override {
     reflect = false;
     return std::pair<T, Vec3D<T>>{1., Vec3D<T>{0., 0., 0.}};
   }
   T getSourceDistributionPower() const override { return 1.; }
   std::array<T, 2> getMeanFreePath() const override { return {1., 1.}; }
   T collision(VolumeParticle<T> &particle, RNG &rng,
-                      std::vector<VolumeParticle<T>> &particleStack) override {
+              std::vector<VolumeParticle<T>> &particleStack) override {
     return 0.;
   }
 

@@ -268,9 +268,8 @@ public:
     return cellGrid->getCellData().getScalarData(name);
   }
 
-  std::vector<std::array<T, 3>> *addVectorData(std::string name,
-                                               std::array<T, 3> initValue = {
-                                                   0., 0., 0.}) {
+  std::vector<std::array<T, 3>> *
+  addVectorData(std::string name, std::array<T, 3> initValue = {0., 0., 0.}) {
     if (cellGrid->getCellData().getVectorData(name, false) != nullptr) {
       auto data = cellGrid->getCellData().getVectorData(name);
       data->resize(numberOfCells, initValue);
@@ -357,7 +356,7 @@ public:
     return cellGrid->getCellData().getVectorData(name);
   }
 
-// --------------------------------------------------------------------------
+  // --------------------------------------------------------------------------
   // ADD TO PUBLIC SECTION OF csDenseCellSet.hpp
   // --------------------------------------------------------------------------
 
@@ -365,8 +364,8 @@ public:
     // 1. Check size
     if (newData.size() != this->getNumberOfCells()) {
       Logger::getInstance()
-          .addError("setScalarData: Size mismatch. Expected " + 
-                    std::to_string(this->getNumberOfCells()) + ", got " + 
+          .addError("setScalarData: Size mismatch. Expected " +
+                    std::to_string(this->getNumberOfCells()) + ", got " +
                     std::to_string(newData.size()))
           .print();
       return;
@@ -374,32 +373,36 @@ public:
 
     // 2. Get the MUTABLE pointer using the existing public API
     // In C++, this returns std::vector<T>*
-    auto* dataPtr = this->getScalarData(name);
+    auto *dataPtr = this->getScalarData(name);
 
     if (!dataPtr) {
       Logger::getInstance()
-          .addWarning("setScalarData: Label '" + name + "' not found. Ignoring.")
+          .addWarning("setScalarData: Label '" + name +
+                      "' not found. Ignoring.")
           .print();
       return;
     }
 
     // 3. Overwrite the data in place
-    // This dereferences the pointer (*dataPtr) and assigns the new vector to it.
+    // This dereferences the pointer (*dataPtr) and assigns the new vector to
+    // it.
     *dataPtr = newData;
   }
 
-  void setVectorData(std::string name, const std::vector<std::array<T, 3>> &newData) {
+  void setVectorData(std::string name,
+                     const std::vector<std::array<T, 3>> &newData) {
     if (newData.size() != this->getNumberOfCells()) {
-       Logger::getInstance().addError("setVectorData: Size mismatch.").print();
-       return;
+      Logger::getInstance().addError("setVectorData: Size mismatch.").print();
+      return;
     }
 
     // Use existing public API
-    auto* dataPtr = this->getVectorData(name);
+    auto *dataPtr = this->getVectorData(name);
 
     if (!dataPtr) {
       Logger::getInstance()
-          .addWarning("setVectorData: Label '" + name + "' not found. Ignoring.")
+          .addWarning("setVectorData: Label '" + name +
+                      "' not found. Ignoring.")
           .print();
       return;
     }

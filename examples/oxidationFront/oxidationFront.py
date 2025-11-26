@@ -241,8 +241,6 @@ class OxidationSimulation:
                 # MUST sync before writing
                 self._sync_data()
                 
-                max_ox = np.max(self.oxidant)
-                max_frac = np.max(self.oxide_fraction)
                 print(f"Step {step}, Time: {time:.4f}")
                 
                 self.cell_set.writeVTU(f"oxidation_step_{step}.vtu")

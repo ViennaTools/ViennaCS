@@ -74,12 +74,15 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
           "Add a scalar value to be stored and modified in each cell.")
       .def(
           "addVectorData",
-          [](DenseCellSet<T, D> &cellSet, std::string name, std::array<T, 3> initValue) {
+          [](DenseCellSet<T, D> &cellSet, std::string name,
+             std::array<T, 3> initValue) {
             cellSet.addVectorData(name, initValue);
             // discard return value
           },
-          pybind11::arg("name"), pybind11::arg("initValue") = std::array<T, 3>{0., 0., 0.},
-          "Add a vector value (3 components) to be stored and modified in each cell.")
+          pybind11::arg("name"),
+          pybind11::arg("initValue") = std::array<T, 3>{0., 0., 0.},
+          "Add a vector value (3 components) to be stored and modified in each "
+          "cell.")
       .def("getDepth", &DenseCellSet<T, D>::getDepth,
            "Get the depth of the cell set.")
       .def("getGridDelta", &DenseCellSet<T, D>::getGridDelta,
@@ -113,7 +116,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
            "Get the data stored at each cell. WARNING: This function only "
            "returns a copy of the data")
       .def("getVectorData", &DenseCellSet<T, D>::getVectorData,
-           "Get the vector data stored at each cell. WARNING: This function only "
+           "Get the vector data stored at each cell. WARNING: This function "
+           "only "
            "returns a copy of the data")
       .def("setScalarData", &DenseCellSet<T, D>::setScalarData,
            pybind11::arg("name"), pybind11::arg("newData"),
