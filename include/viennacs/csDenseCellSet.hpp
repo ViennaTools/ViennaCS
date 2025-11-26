@@ -357,6 +357,57 @@ public:
     return cellGrid->getCellData().getVectorData(name);
   }
 
+// --------------------------------------------------------------------------
+  // ADD TO PUBLIC SECTION OF csDenseCellSet.hpp
+  // --------------------------------------------------------------------------
+
+  void setScalarData(std::string name, const std::vector<T> &newData) {
+    // 1. Check size
+    if (newData.size() != this->getNumberOfCells()) {
+      Logger::getInstance()
+          .addError("setScalarData: Size mismatch. Expected " + 
+                    std::to_string(this->getNumberOfCells()) + ", got " + 
+                    std::to_string(newData.size()))
+          .print();
+      return;
+    }
+
+    // 2. Get the MUTABLE pointer using the existing public API
+    // In C++, this returns std::vector<T>*
+    auto* dataPtr = this->getScalarData(name);
+
+    if (!dataPtr) {
+      Logger::getInstance()
+          .addWarning("setScalarData: Label '" + name + "' not found. Ignoring.")
+          .print();
+      return;
+    }
+
+    // 3. Overwrite the data in place
+    // This dereferences the pointer (*dataPtr) and assigns the new vector to it.
+    *dataPtr = newData;
+  }
+
+  void setVectorData(std::string name, const std::vector<std::array<T, 3>> &newData) {
+    if (newData.size() != this->getNumberOfCells()) {
+       Logger::getInstance().addError("setVectorData: Size mismatch.").print();
+       return;
+    }
+
+    // Use existing public API
+    auto* dataPtr = this->getVectorData(name);
+
+    if (!dataPtr) {
+      Logger::getInstance()
+          .addWarning("setVectorData: Label '" + name + "' not found. Ignoring.")
+          .print();
+      return;
+    }
+
+    // Vector assignment
+    *dataPtr = newData;
+  }
+
   std::vector<std::string> getScalarDataLabels() const {
     std::vector<std::string> labels;
     auto numScalarData = cellGrid->getCellData().getScalarDataSize();

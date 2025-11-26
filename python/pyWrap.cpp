@@ -115,6 +115,12 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def("getVectorData", &DenseCellSet<T, D>::getVectorData,
            "Get the vector data stored at each cell. WARNING: This function only "
            "returns a copy of the data")
+      .def("setScalarData", &DenseCellSet<T, D>::setScalarData,
+           pybind11::arg("name"), pybind11::arg("newData"),
+           "Overwrite the scalar data associated with 'name' with a new array.")
+      .def("setVectorData", &DenseCellSet<T, D>::setVectorData,
+           pybind11::arg("name"), pybind11::arg("newData"),
+           "Overwrite the vector data associated with 'name' with a new array.")
       .def("getScalarDataLabels", &DenseCellSet<T, D>::getScalarDataLabels,
            "Get the labels of the scalar data stored in the cell set.")
       .def("getIndex", &DenseCellSet<T, D>::getIndex,

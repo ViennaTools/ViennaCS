@@ -1,7 +1,9 @@
 build/
 .vscode/
+.venv
 .idea/
 cmake-build-*
+__pycache__
 
 # Prerequisites
 *.d
@@ -35,3 +37,6 @@ cmake-build-*
 *.exe
 *.out
 *.app
+
+# Output .vt* files
+*.vt*
