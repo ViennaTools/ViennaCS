@@ -39,7 +39,8 @@ def ReadConfigFile(fileName: str):
 
 def makeLShape(params: dict):
     try:
-        import viennals2d as vls
+        import viennals as vls
+        vls.setDimension(2)
     except ImportError:
         print(
             "The ViennaLS Python library is required to run this example. "
@@ -100,7 +101,9 @@ def makeLShape(params: dict):
     return substrate
 
 
-import viennals2d as vls
+import viennals as vls
+vls.setDimension(2)
+
 
 # vcs.Logger.setLogLevel(vcs.LogLevel.INTERMEDIATE)
 params = ReadConfigFile("config.txt")

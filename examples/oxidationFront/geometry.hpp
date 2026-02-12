@@ -1,14 +1,16 @@
 #pragma once
 
+#include <csDenseCellSet.hpp>
+
 #include <lsBooleanOperation.hpp>
 #include <lsMakeGeometry.hpp>
-#include <lsWriteVisualizationMesh.hpp>
 
 #include <vcUtil.hpp>
 
 namespace geometry {
 
 using namespace viennals;
+using namespace viennacs;
 
 template <class T, int D> using levelSetType = SmartPointer<Domain<T, D>>;
 template <class T, int D> using levelSetsType = std::vector<levelSetType<T, D>>;
@@ -36,16 +38,25 @@ void makePlane(levelSetType<T, D> &domain, const T *origin, const T *normal) {
 
 template <class T, int D>
 void makeBox(levelSetType<T, D> &domain, const T *minPoint, const T *maxPoint) {
-  MakeGeometry<T, D>(domain, SmartPointer<Box<T, D>>::New(minPoint, maxPoint))
-      .apply();
+  MakeGeometry<T, D> maker(domain, SmartPointer<Box<T, D>>::New(minPoint, maxPoint));
+  maker.setIgnoreBoundaryConditions(true);
+  maker.apply();
+}
+
+template <class T, int D>
+void makeCylinder(levelSetType<T, D> &domain, const T *origin, const T *axis,
+                  T height, T radius) {
+  MakeGeometry<T, D> maker(domain, SmartPointer<Cylinder<T, D>>::New(origin, axis, height, radius));
+  maker.setIgnoreBoundaryConditions(true);
+  maker.apply();
 }
 
 template <class T, int D>
 auto makeStructure(util::Parameters &params, materialMapType matMap,
-                   int substrateMaterial, int maskMaterial) {
+                   int substrateMaterial, int maskMaterial, int ambientMaterial) {
   const T gridDelta = params.get("gridDelta");
   const T substrateHeight = params.get("substrateHeight");
-  const T coverHeight = params.get("coverHeight");
+  const T ambientHeight = params.get("ambientHeight");
   const T maskHeight = params.get("maskHeight");
   const T holeRadius = params.get("holeRadius");
   BoundaryConditionEnum boundaryConds[D] = {
@@ -55,7 +66,7 @@ auto makeStructure(util::Parameters &params, materialMapType matMap,
   T bounds[2 * D] = {-params.get("xExtent") / 2., params.get("xExtent") / 2.,
                      -params.get("yExtent") / 2., params.get("yExtent") / 2.};
   bounds[2 * D - 2] = 0.;
-  bounds[2 * D - 1] = substrateHeight + maskHeight + gridDelta;
+  bounds[2 * D - 1] = substrateHeight + maskHeight + ambientHeight + gridDelta;
 
   T origin[D] = {};
   T normal[D] = {};
@@ -65,49 +76,85 @@ auto makeStructure(util::Parameters &params, materialMapType matMap,
 
   // Substrate
   origin[D - 1] = 0.;
-  auto bottom = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
-  makePlane(bottom, origin, normal);
-  addLevelSet(levelSets, bottom, matMap, substrateMaterial);
+  // origin[D - 1] = substrateHeight;
+  if constexpr (D == 2) {
+    auto bottom = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+    makePlane(bottom, origin, normal);
+    addLevelSet(levelSets, bottom, matMap, substrateMaterial);
 
-  origin[D - 1] = substrateHeight;
-  auto substrate = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
-  makePlane(substrate, origin, normal);
-  addLevelSet(levelSets, substrate, matMap, substrateMaterial);
+    auto substrate = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+    makePlane(substrate, origin + substrateHeight, normal);
+    addLevelSet(levelSets, substrate, matMap, substrateMaterial);
+  } else {
+    auto substrate = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+    makeCylinder(substrate, origin, normal, substrateHeight, params.get("xExtent") / 2.0);
+    addLevelSet(levelSets, substrate, matMap, substrateMaterial);
+  }
 
   // Mask
   if (maskHeight > 0.) {
     auto mask = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
-    origin[D - 1] = substrateHeight + maskHeight;
-    makePlane(mask, origin, normal);
 
-    auto maskAdd = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+    if constexpr (D == 3) {
+      origin[D - 1] = substrateHeight;
+      makeCylinder(mask, origin, normal, maskHeight, params.get("xExtent") / 2.0);
 
-    T minPoint[D] = {-holeRadius, -holeRadius};
-    T maxPoint[D] = {holeRadius, holeRadius};
-    minPoint[D - 1] = substrateHeight - gridDelta;
-    maxPoint[D - 1] = substrateHeight + maskHeight + gridDelta;
+      auto maskHole = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+      makeCylinder(maskHole, origin, normal, maskHeight + 2 * gridDelta, holeRadius);
 
-    makeBox(maskAdd, minPoint, maxPoint);
+      BooleanOperation<T, D>(mask, maskHole,
+                             BooleanOperationEnum::RELATIVE_COMPLEMENT)
+          .apply();
+    } else {
+      origin[D - 1] = substrateHeight + maskHeight;
+      makePlane(mask, origin, normal);
 
-    BooleanOperation<T, D>(mask, maskAdd,
-                           BooleanOperationEnum::RELATIVE_COMPLEMENT)
-        .apply();
+      auto maskAdd = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+
+      T minPoint[D] = {-holeRadius, -holeRadius};
+      T maxPoint[D] = {holeRadius, holeRadius};
+      minPoint[D - 1] = substrateHeight - gridDelta;
+      maxPoint[D - 1] = substrateHeight + maskHeight + gridDelta;
+
+      makeBox(maskAdd, minPoint, maxPoint);
+
+      BooleanOperation<T, D>(mask, maskAdd,
+                             BooleanOperationEnum::RELATIVE_COMPLEMENT)
+          .apply();
+    }
 
     addLevelSet(levelSets, mask, matMap, maskMaterial);
+  }
+
+  // Ambient
+  if (ambientHeight > 0.) {
+    auto ambient = levelSetType<T, D>::New(bounds, boundaryConds, gridDelta);
+    if constexpr (D == 3) {
+      origin[D - 1] = substrateHeight;
+      makeCylinder(ambient, origin, normal, ambientHeight, params.get("xExtent") / 2.0);
+    } else {
+      origin[D - 1] = substrateHeight + maskHeight + ambientHeight;
+      makePlane(ambient, origin, normal);
+    }
+
+    addLevelSet(levelSets, ambient, matMap, ambientMaterial);
   }
 
   return levelSets;
 }
 
 template <class T, int D>
-void saveVolumeMesh(std::string name, levelSetsType<T, D> &levelSets,
-                    materialMapType matMap) {
-  WriteVisualizationMesh<T, D> writer;
-  writer.setFileName(name);
-  for (const auto &ls : levelSets)
-    writer.insertNextLevelSet(ls);
-  writer.setMaterialMap(matMap);
-  writer.apply();
+void makeCellSet(DenseCellSet<T, D> &cellSet, util::Parameters &params,
+                 int substrateMaterial, int maskMaterial, int ambientMaterial) {
+  // Generate Geometry (Level Sets)
+  auto matMap = SmartPointer<MaterialMap>::New();
+  auto levelSets = makeStructure<T, D>(params, matMap, substrateMaterial,
+                                       maskMaterial, ambientMaterial);
+
+  // Create Cell Set (Discretization)
+  T depth = params.get("substrateHeight") + params.get("ambientHeight");
+  cellSet.setCellSetPosition(true);
+  cellSet.fromLevelSets(levelSets, matMap, depth);
 }
 
 } // namespace geometry

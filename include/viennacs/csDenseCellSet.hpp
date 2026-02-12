@@ -45,6 +45,7 @@ private:
 
   bool cellSetAboveSurface = false;
   int coverMaterial = -1;
+  bool createCoverCells = false;
   std::bitset<D> periodicBoundary;
 
   std::vector<T> *fillingFractions_;
@@ -130,6 +131,12 @@ public:
         }
 
         if (centerValue <= 0.) {
+          int material = materialId;
+          if (useMaterialMap)
+            material = indexToMaterial(materialId, materialMap);
+
+          if (!createCoverCells && material == coverMaterial) break;
+
           std::array<unsigned, 1 << D> voxel;
           bool addVoxel = false;
           // now insert all points of voxel into pointList
@@ -158,10 +165,6 @@ public:
 
           // create element if inside domain bounds
           if (addVoxel) {
-            int material = materialId;
-            if (useMaterialMap)
-              material = indexToMaterial(materialId, materialMap);
-
             if constexpr (D == 3) {
               // reorder elements for hexas to be ordered correctly
               std::array<unsigned, 8> hexa{voxel[0], voxel[1], voxel[3],
@@ -428,6 +431,10 @@ public:
 
   void setCoverMaterial(const int passedCoverMaterial) {
     coverMaterial = passedCoverMaterial;
+  }
+
+  void setCreateCoverCells(const bool passedCreateCoverCells) {
+    createCoverCells = passedCreateCoverCells;
   }
 
   bool getCellSetPosition() const { return cellSetAboveSurface; }

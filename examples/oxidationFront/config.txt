@@ -1,35 +1,35 @@
 #Grid Setup
+dimensions = 3
 #Domain
-gridDelta = 0.85
-xExtent = 85     # nm
-yExtent = 50     # nm
+gridDelta = 1.0
+xExtent = 150     # mm
+yExtent = 150     # mm
 
 #Geometry
 substrateHeight = 50
-coverHeight = 8
-maskHeight = 10
-holeRadius = 20.
+ambientHeight = 2
+maskHeight = 0
+holeRadius = 50.
 
 #Simulation Control
 numThreads = 8
-timeStabilityFactor = 0.4
-duration = 300.0
+timeStabilityFactor = 0.8
+duration = 100.0
 
 #Material Properties
 #Diffusion coefficient of oxidant inside SiO2
-diffusivityOxide = 2.0
+oxidantDiffusivity = 2.0
 
 #Reaction Kinetics
 #Base reaction rate (Si -> SiO2)
-reactionRateConstant = 1.0
+reactionRateConstant = 0.1
 #How much the E-field enhances the rate (alpha)
 eFieldInfluence = 0.5
 #Conversion factor: how much Oxide Fraction is created per unit oxidant consumed
-oxideConversionRate = 0.1
 
 #Boundary Conditions
 #Concentration of oxidant in the gas/ambient
-boundaryValue = 1.0
+ambientOxidant = 1.0
 
 #Input Files
 EfieldFile = Efield.csv

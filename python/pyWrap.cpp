@@ -63,7 +63,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def(pybind11::init())
       .def("fromLevelSets", &DenseCellSet<T, D>::fromLevelSets,
            pybind11::arg("levelSets"), pybind11::arg("materialMap") = nullptr,
-           pybind11::arg("depth") = 0.)
+           pybind11::arg("depth") = 0.,
+           "Create cell set from a list of level sets")
       .def("getBoundingBox", &DenseCellSet<T, D>::getBoundingBox)
       .def(
           "addScalarData",

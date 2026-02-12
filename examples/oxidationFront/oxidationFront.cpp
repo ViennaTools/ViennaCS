@@ -9,18 +9,15 @@
 */
 
 #include <algorithm>
-#include <cmath>
 #include <fstream>
 #include <iostream> // Added for std::cout
+#include <omp.h>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <csDenseCellSet.hpp>
-
-#include <Eigen/SparseCholesky>
-#include <Eigen/SparseCore>
-#include <Eigen/SparseLU>
 
 #include "geometry.hpp"
 
@@ -28,408 +25,394 @@ namespace cs = viennacs;
 namespace ls = viennals;
 
 using T = double;
-constexpr int D = 2;
+constexpr int D = 3;
 
-const int substrateMaterial = 0;
-const int maskMaterial = 1;
-const int coverMaterial = 2;
-
-struct SolutionData {
-  Eigen::SparseLU<Eigen::SparseMatrix<T>> solver;
-  std::unordered_map<int, int> cellMapping; // cellSet -> solution index
-  unsigned numCells = 0;
-  Eigen::SparseMatrix<T> systemMatrix;
-  Eigen::Matrix<T, Eigen::Dynamic, 1> rhs;
+// Material IDs used in the simulation
+enum MaterialIDs {
+  substrate = 0,
+  oxide = 1,
+  mask = 2,
+  ambient = 3
 };
 
-template <typename Material> bool isMaterial(Material x, int material) {
-  return static_cast<int>(x) == material;
-}
-
-template <typename Material>
-bool isDirichletBoundary(std::array<T, 3> center, Material material,
-                         cs::util::Parameters &params) {
-  return isMaterial(material, coverMaterial) &&
-         center[D - 1] <
-             params.get("substrateHeight") + params.get("gridDelta");
+template <typename Material> bool isMaterial(Material x, MaterialIDs material) {
+  return static_cast<int>(x) == static_cast<int>(material);
 }
 
 // -----------------------------------------------------------------------------
 // DATA LOADING WITH SPATIAL MAPPING
 // -----------------------------------------------------------------------------
 
-void addElectricField(cs::DenseCellSet<T, D> &cellSet,
-                      cs::util::Parameters &params) {
-  std::string csvFileName = params.get<std::string>("EfieldFile");
-  const auto numCells = cellSet.getNumberOfCells();
-  if (numCells == 0)
-    return;
+class OxidationSimulation {
+public:
+  OxidationSimulation(const std::string &configFile) {
+    params.readConfigFile(configFile);
+    omp_set_num_threads(params.get<int>("numThreads"));
 
-  std::ifstream in(csvFileName);
-  if (!in.good()) {
-    cs::Logger::getInstance()
-        .addError("addElectricField: cannot open file " + csvFileName)
-        .print();
-    return;
+    // Generate Geometry and Cell Set
+    geometry::makeCellSet<T, D>(cellSet, params, substrate, mask, ambient);
+    cellSet.buildNeighborhood();
+
+    // Initialize Fields
+    initOxidationFields();
+    cellSet.writeVTU("oxidation_initial.vtu");
   }
 
-  // Initialize vector data
-  auto E = cellSet.getVectorData("Efield");
-  if (!E) {
-    E = cellSet.addVectorData("Efield", {0., 0., 0.});
-  } else {
-    E->assign(numCells, {0., 0., 0.});
-  }
+  void apply() {
+    T duration = params.get("duration");
+    T dx = params.get("gridDelta");
+    T D_oxide = params.get("oxidantDiffusivity");
 
-  // 1. Load CSV into a flat buffer
-  std::vector<std::array<T, 3>> rawData;
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.empty() || line[0] == '#' || line[0] == '%')
-      continue;
-    std::stringstream ss(line);
-    std::string segment;
-    std::array<T, 3> val = {0., 0., 0.};
-    int component = 0;
-    while (std::getline(ss, segment, ',') && component < 3) {
-      try {
-        val[component++] = std::stod(segment);
-      } catch (...) {
+    // Estimate stable time step (Von Neumann stability for diffusion)
+    T dt = std::min(dx * dx / (D_oxide * 2 * D) *
+                        params.get("timeStabilityFactor"),
+                    duration);
+
+    T time = 0.;
+    int step = 0;
+
+    std::cout << "Starting oxidation simulation..." << std::endl;
+    std::cout << "Initial dt: " << dt << std::endl;
+
+    while (time < duration) {
+      if (time + dt > duration)
+        dt = duration - time;
+
+      // 0. Update Active Cells (Dynamic Domain)
+      updateActiveCells();
+
+      // Update E-field (Database access simulation)
+      updateElectricField(time);
+
+      // Pre-calculate reaction rates for the current time step
+      std::vector<T> reactionRates(cellSet.getNumberOfCells(), 0.0);
+      if (reactionRates.size() != cellSet.getNumberOfCells()) {
+        reactionRates.resize(cellSet.getNumberOfCells());
+      }
+      calculateReactionRates(reactionRates);
+
+      // Calculate adaptive time step based on Diffusion and Reaction stability
+      T max_k = 0.0;
+#pragma omp parallel for reduction(max : max_k)
+      for (size_t i = 0; i < reactionRates.size(); ++i) {
+        if (reactionRates[i] > max_k)
+          max_k = reactionRates[i];
+      }
+
+      T dt_diff = dx * dx / (D_oxide * 2 * D);
+      T dt_react = (max_k > 1e-12) ? (1.0 / max_k) : duration;
+
+      T dt = std::min(dt_diff, dt_react) * params.get("timeStabilityFactor");
+
+      if (time + dt > duration)
+        dt = duration - time;
+
+      if (step == 0) {
+        std::cout << "Initial dt: " << dt << std::endl;
+      }
+
+      // A. Solve Diffusion (Explicit)
+      solveDiffusionExplicit(dt, reactionRates);
+
+      // C. Update Oxide State
+      updateOxideFraction(dt, reactionRates);
+
+      time += dt;
+      step++;
+
+      // Output intermediate results
+      if (step % 10 == 0) {
+        std::cout << "Step " << step << " Time: " << time << std::endl;
+        cellSet.writeVTU("oxidation_step_" + std::to_string(step) + ".vtu");
       }
     }
-    if (component > 0)
-      rawData.push_back(val);
+
+    // Final Output
+    cellSet.writeVTU("oxidation_final.vtu");
+    std::cout << "Done." << std::endl;
   }
 
-  // 2. Reconstruct Grid Info from Params
-  T dx = params.get("gridDelta");
-  T xExtent = params.get("xExtent");
-  // Assuming E-field was generated for the substrate region height
-  T yExtent = params.get("substrateHeight");
+private:
+  cs::util::Parameters params;
+  cs::DenseCellSet<T, D> cellSet;
+  std::vector<int> activeCells;
+  std::vector<bool> isActiveCell;
+  std::vector<T> nextOxidant;
+  std::vector<T> reactionRates;
+  std::vector<T> electricField1D;
 
-  int nx = static_cast<int>(xExtent / dx);
-  int ny = static_cast<int>(yExtent / dx);
+  // Updates E-field vectors. In this toy model, it reads from a CSV.
+  void updateElectricField(T time) {
+    electricField1D.clear();
+    std::string csvFileName = params.get<std::string>("EfieldFile");
 
-  if (rawData.size() < nx * ny) {
+    std::ifstream EfieldFile(csvFileName);
+    if (!EfieldFile.good()) {
+      cs::Logger::getInstance()
+          .addError("updateElectricField: cannot open file " + csvFileName)
+          .print();
+      return;
+    }
+
+    // 1. Load CSV into a flat buffer
+    std::string line;
+    while (std::getline(EfieldFile, line)) {
+      if (line.empty() || line[0] == '#' || line[0] == '%')
+        continue;
+      std::stringstream ss(line);
+      std::string segment;
+      std::vector<T> row;
+      while (std::getline(ss, segment, ',')) {
+        try {
+          row.push_back(std::stod(segment));
+        } catch (...) {}
+      }
+
+      // For D=2, expect x, E (2 cols). For D=3, expect x, y, E (3 cols).
+      if (D == 2 && row.size() >= 2) {
+        electricField1D.push_back(row[1]);
+      } else if (D == 3 && row.size() >= 3) {
+        electricField1D.push_back(row[2]);
+      } else if (!row.empty()) {
+        // Fallback or error handling if needed, currently just taking last
+        electricField1D.push_back(row.back());
+      }
+    }
+
     cs::Logger::getInstance()
-        .addWarning(
-            "CSV has fewer rows than expected grid size. Mapping may fail.")
+        .addInfo("Loaded " + std::to_string(electricField1D.size()) +
+                 " 1D E-field data points at time " + std::to_string(time))
         .print();
   }
 
-  // 3. Map Cell Centers to E-field Grid
-  int mappedCount = 0;
-  for (unsigned int i = 0; i < numCells; ++i) {
-    auto center = cellSet.getCellCenter(i);
+  // Initializes scalar fields for the simulation
+  void initOxidationFields() {
+    auto oxidant = cellSet.addScalarData("oxidant", 0.);
+    auto oxideFraction = cellSet.addScalarData("oxideFraction", 0.);
+    auto materials = cellSet.getScalarData("Material");
+    const T ambientOxidant = params.get("ambientOxidant");
 
-    // Transform Simulation Coordinates to Generator Coordinates
-    // Sim X: [-xExtent/2, xExtent/2] -> Gen X: [0, xExtent]
-    T gen_x = center[0] + (xExtent / 2.0);
-    T gen_y = center[1]; // Y matches (0 at bottom)
-
-    int ix = static_cast<int>(gen_x / dx);
-    int iy = static_cast<int>(gen_y / dx);
-
-    // Check bounds
-    if (ix >= 0 && ix < nx && iy >= 0 && iy < ny) {
-      // Index in flat array (assuming Y-major from generator loops: for y...
-      // for x...) Generator: for j, y... for i, x... -> rawData index = j * nx
-      // + i
-      size_t gridIdx = iy * nx + ix;
-
-      if (gridIdx < rawData.size()) {
-        (*E)[i] = rawData[gridIdx];
-        mappedCount++;
+    // Set initial boundary condition: Cover material (Gas) has fixed oxidant
+    // concentration
+#pragma omp parallel for
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isMaterial((*materials)[i], ambient)) {
+        (*oxidant)[i] = ambientOxidant;
       }
     }
   }
 
-  cs::Logger::getInstance()
-      .addInfo("Mapped E-field to " + std::to_string(mappedCount) + " cells.")
-      .print();
-}
+  // Updates the mapping from global cell IDs to linear system row indices.
+  void updateActiveCells() {
+    auto materials = cellSet.getScalarData("Material");
+    auto oxideFractions = cellSet.getScalarData("oxideFraction");
 
-void initOxidationFields(cs::DenseCellSet<T, D> &cellSet,
-                         cs::util::Parameters &params) {
-  auto oxidant = cellSet.addScalarData("oxidant", 0.);
-  auto oxideFraction = cellSet.addScalarData("oxideFraction", 0.);
-  auto materials = cellSet.getScalarData("Material");
-  const T boundaryValue = params.get("boundaryValue");
+    activeCells.clear();
+    isActiveCell.assign(cellSet.getNumberOfCells(), false);
+
+    // Track which cells are "Core Active" (Oxide or Source)
+    std::vector<bool> isCoreActive(cellSet.getNumberOfCells(), false);
 
 #pragma omp parallel for
-  for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
-    if (isMaterial((*materials)[i], coverMaterial)) {
-      (*oxidant)[i] = boundaryValue;
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isMaterial((*materials)[i], substrate) ||
+          isMaterial((*materials)[i], oxide)) {
+        bool active = (*oxideFractions)[i] > 1e-6;
+        if (!active) {
+          // Check if touching ambient (Source term)
+          for (auto n : cellSet.getNeighbors(i)) {
+            if (n >= 0 && isMaterial((*materials)[n], ambient)) {
+              active = true;
+              break;
+            }
+          }
+        }
+        isCoreActive[i] = active;
+      }
+    }
+
+    // Expand to neighbors to allow front propagation
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isMaterial((*materials)[i], substrate) ||
+          isMaterial((*materials)[i], oxide)) {
+        // Solve if Core Active OR neighbor of Core Active (Narrow Band)
+        bool shouldSolve = isCoreActive[i];
+        if (!shouldSolve) {
+          for (auto n : cellSet.getNeighbors(i)) {
+            if (n >= 0 && isCoreActive[n]) {
+              shouldSolve = true;
+              break;
+            }
+          }
+        }
+
+        if (shouldSolve) {
+          activeCells.push_back(i);
+          isActiveCell[i] = true;
+        }
+      }
     }
   }
-}
 
-void initCellMapping(SolutionData &sol, cs::DenseCellSet<T, D> &cellSet) {
-  auto materials = cellSet.getScalarData("Material");
-  sol.numCells = 0;
-  sol.cellMapping.clear();
+  // Calculates the reaction rate k based on the local E-field and oxide
+  // fraction.
+  T getReactionRate(T Ey, T oxideFrac) {
+    const T k_base = params.get("reactionRateConstant");
+    const T alpha = params.get("eFieldInfluence");
 
-  for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
-    if (isMaterial((*materials)[i], substrateMaterial)) {
-      sol.cellMapping[i] = sol.numCells++;
-    }
+    // Reaction slows down as Silicon is consumed (oxideFrac approaches 1.0)
+    T availableSi = std::max(0.0, 1.0 - oxideFrac);
+
+    // Use absolute value of Ey to ensure positive rate enhancement
+    return k_base * (1.0 + alpha * std::abs(Ey)) * availableSi;
   }
-}
 
-// -----------------------------------------------------------------------------
-// PHYSICS KERNELS
-// -----------------------------------------------------------------------------
-
-T getReactionRate(const std::array<T, 3> &E, T oxideFrac,
-                  cs::util::Parameters &params) {
-  const T k_base = params.get("reactionRateConstant");
-  const T alpha = params.get("eFieldInfluence");
-
-  T E_mag = std::sqrt(E[0] * E[0] + E[1] * E[1] + E[2] * E[2]);
-  T availableSi = std::max(0.0, 1.0 - oxideFrac);
-
-  return k_base * (1.0 + alpha * E_mag) * availableSi;
-}
-
-T getDiffusivity(int material, T oxideFrac, cs::util::Parameters &params) {
-  if (isMaterial(material, maskMaterial))
+  // Calculates diffusion coefficient.
+  T getDiffusivity(int material, T oxideFrac, T D_ox) {
+    if (isMaterial(material, substrate) || isMaterial(material, oxide)) {
+      return D_ox * oxideFrac;
+    }
     return 0.0;
-  if (isMaterial(material, coverMaterial))
-    return 0.0; // Not used in solve directly
-
-  const T D_ox = params.get("diffusivityOxide");
-  return D_ox * oxideFrac;
-}
-
-// -----------------------------------------------------------------------------
-// SOLVER
-// -----------------------------------------------------------------------------
-
-void assembleMatrix(SolutionData &sol, cs::DenseCellSet<T, D> &cellSet,
-                    cs::util::Parameters &params, T dt) {
-  auto materials = cellSet.getScalarData("Material");
-  auto oxideFractions = cellSet.getScalarData("oxideFraction");
-  auto EFields = cellSet.getVectorData("Efield");
-
-  const T dx = cellSet.getGridDelta();
-  const T dtdx2 = dt / (dx * dx);
-
-  std::vector<Eigen::Triplet<T>> triplets;
-  triplets.reserve(2 * D * sol.numCells);
-
-  for (const auto &ids : sol.cellMapping) {
-    auto i = ids.first;
-    auto row = ids.second;
-
-    // 1. Reaction Sink
-    T reactionSink = 0.0;
-    std::array<T, 3> E =
-        (EFields) ? (*EFields)[i] : std::array<T, 3>{0., 0., 0.};
-    T k = getReactionRate(E, (*oxideFractions)[i], params);
-    reactionSink = dt * k;
-
-    // 2. Diffusion
-    const auto &neighbors = cellSet.getNeighbors(i);
-    T D_center = getDiffusivity((*materials)[i], (*oxideFractions)[i], params);
-    T D_sum_neighbors = 0.0;
-
-    for (auto n : neighbors) {
-      if (n < 0)
-        continue; // Boundary
-
-      int mat_n = static_cast<int>((*materials)[n]);
-      if (isMaterial(mat_n, maskMaterial))
-        continue; // Impermeable
-
-      T D_eff = 0.0;
-
-      if (sol.cellMapping.count(n)) {
-        // Substrate Neighbor
-        T D_neighbor = getDiffusivity(mat_n, (*oxideFractions)[n], params);
-        D_eff = 0.5 * (D_center + D_neighbor);
-
-        triplets.emplace_back(row, sol.cellMapping[n], -dtdx2 * D_eff);
-
-      } else if (isMaterial(mat_n, coverMaterial)) {
-        // Gas Neighbor (Dirichlet)
-        D_eff = D_center;
-        // Flux in handled in RHS
-      }
-
-      D_sum_neighbors += D_eff;
-    }
-
-    // Diagonal
-    triplets.emplace_back(row, row,
-                          1. + (dtdx2 * D_sum_neighbors) + reactionSink);
   }
 
-  sol.systemMatrix.resize(sol.numCells, sol.numCells);
-  sol.systemMatrix.setFromTriplets(triplets.begin(), triplets.end());
-  sol.systemMatrix.makeCompressed();
-}
+  // Pre-calculates reaction rates for all cells
+  void calculateReactionRates(std::vector<T> &reactionRates) {
+    auto oxideFractions = cellSet.getScalarData("oxideFraction");
+    auto materials = cellSet.getScalarData("Material");
 
-void assembleRHS(SolutionData &sol, cs::DenseCellSet<T, D> &cellSet,
-                 cs::util::Parameters &params, T dt) {
-  auto oxidant = cellSet.getScalarData("oxidant");
-  auto materials = cellSet.getScalarData("Material");
-  auto oxideFractions = cellSet.getScalarData("oxideFraction");
-
-  const T boundaryValue = params.get("boundaryValue");
-  const T dx = cellSet.getGridDelta();
-  const T dtdx2 = dt / (dx * dx);
-
-  sol.rhs.resize(sol.numCells);
-
-  for (const auto &ids : sol.cellMapping) {
-    auto i = ids.first;
-    auto row = ids.second;
-
-    T val = (*oxidant)[i]; // Old value
-
-    // Add Flux from Gas neighbors
-    const auto &neighbors = cellSet.getNeighbors(i);
-    T D_center = getDiffusivity((*materials)[i], (*oxideFractions)[i], params);
-
-    for (auto n : neighbors) {
-      if (n >= 0 && isMaterial((*materials)[n], coverMaterial)) {
-        T D_interface =
-            params.get("diffusivityOxide"); // Use D_ox for the interface flux
-        val += dtdx2 * D_interface * boundaryValue;
-      }
-    }
-
-    sol.rhs[row] = val;
-  }
-}
-
-void solveDiffusionStep(SolutionData &sol, cs::DenseCellSet<T, D> &cellSet) {
-  auto oxidant = cellSet.getScalarData("oxidant");
-
-  sol.rhs = sol.solver.solve(sol.rhs);
-
-  if (sol.solver.info() != Eigen::Success) {
-    cs::Logger::getInstance().addError("Solving failed.").print();
-    return;
-  }
-
-  for (const auto &i : sol.cellMapping) {
-    (*oxidant)[i.first] = sol.rhs[i.second];
-  }
-}
-
-void updateOxideFraction(cs::DenseCellSet<T, D> &cellSet,
-                         cs::util::Parameters &params, T dt) {
-  auto oxidant = cellSet.getScalarData("oxidant");
-  auto oxideFractions = cellSet.getScalarData("oxideFraction");
-  auto materials = cellSet.getScalarData("Material");
-  auto EFields = cellSet.getVectorData("Efield");
-
-  T conversionFactor = params.get("oxideConversionRate");
+    // Define CSV grid parameters for E-field lookup
+    const T csvDx = 1.0; // Should match writeCSV.py
+    const T csvExtent = 150.0;
+    const int nx = static_cast<int>(csvExtent / csvDx);
 
 #pragma omp parallel for
-  for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
-    if (isMaterial((*materials)[i], substrateMaterial)) {
-      T C = (*oxidant)[i];
-      if (C > 1e-12) {
-        std::array<T, 3> E =
-            (EFields) ? (*EFields)[i] : std::array<T, 3>{0., 0., 0.};
-        T k = getReactionRate(E, (*oxideFractions)[i], params);
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isMaterial((*materials)[i], substrate) ||
+          isMaterial((*materials)[i], oxide)) {
 
-        T dFrac = k * C * dt * conversionFactor;
+        // E-field lookup based on cell's coordinates
+        auto center = cellSet.getCellCenter(i);
+        T gen_x = center[0] + (csvExtent / 2.0);
+        int ix = static_cast<int>(gen_x / csvDx);
+        
+        int idx = -1;
+        if constexpr (D == 2) {
+            idx = ix;
+        } else {
+            T gen_y = center[1] + (csvExtent / 2.0);
+            int iy = static_cast<int>(gen_y / csvDx);
+            if (iy >= 0 && iy < nx) idx = iy * nx + ix;
+        }
 
-        (*oxideFractions)[i] += dFrac;
-        if ((*oxideFractions)[i] > 1.0)
-          (*oxideFractions)[i] = 1.0;
+        T Ey = 0.0;
+        if (idx >= 0 && static_cast<size_t>(idx) < electricField1D.size()) {
+          Ey = electricField1D[idx];
+        }
+
+        reactionRates[i] = getReactionRate(Ey, (*oxideFractions)[i]);
+      } else {
+        reactionRates[i] = 0.0;
       }
     }
   }
-}
+
+  // Solves diffusion using Explicit Finite Difference (Forward Euler)
+  void solveDiffusionExplicit(T dt, const std::vector<T> &reactionRates) {
+    auto oxidant = cellSet.getScalarData("oxidant");
+    auto materials = cellSet.getScalarData("Material");
+    auto oxideFractions = cellSet.getScalarData("oxideFraction");
+
+    if (nextOxidant.size() != cellSet.getNumberOfCells()) {
+      nextOxidant.resize(cellSet.getNumberOfCells());
+    }
+
+    const T ambientOxidant = params.get("ambientOxidant");
+    const T D_ox = params.get("oxidantDiffusivity");
+    const T dx = cellSet.getGridDelta();
+    const T dtdx2 = dt / (dx * dx);
+
+#pragma omp parallel for
+    for (int idx = 0; idx < static_cast<int>(activeCells.size()); ++idx) {
+      int i = activeCells[idx];
+      T C_old = (*oxidant)[i];
+      T k = reactionRates[i];
+      T diffusion_term = 0.0;
+      T D_center = getDiffusivity((*materials)[i], (*oxideFractions)[i], D_ox);
+
+      const auto &neighbors = cellSet.getNeighbors(i);
+      for (auto n : neighbors) {
+        if (n < 0) continue;
+        int mat_n = static_cast<int>((*materials)[n]);
+        if (isMaterial(mat_n, mask)) continue;
+
+        if (isMaterial(mat_n, ambient)) {
+          // Dirichlet BC
+          // Use D_ox for interface flux to allow oxidant entry into Silicon
+          diffusion_term += D_ox * (ambientOxidant - C_old);
+        } else if (isActiveCell[n]) {
+          // Substrate/Oxide neighbor
+          T D_neighbor = getDiffusivity(mat_n, (*oxideFractions)[n], D_ox);
+          T D_eff = 0.5 * (D_center + D_neighbor);
+          diffusion_term += D_eff * ((*oxidant)[n] - C_old);
+        }
+      }
+      
+      nextOxidant[i] = C_old + dtdx2 * diffusion_term - dt * k * C_old;
+    }
+
+    // Write back
+#pragma omp parallel for
+    for (int idx = 0; idx < static_cast<int>(activeCells.size()); ++idx) {
+      int i = activeCells[idx];
+      (*oxidant)[i] = nextOxidant[i];
+    }
+  }
+
+  // Updates the oxide fraction based on the calculated oxidant concentration.
+  void updateOxideFraction(T dt, const std::vector<T> &reactionRates) {
+    auto oxidant = cellSet.getScalarData("oxidant");
+    auto oxideFractions = cellSet.getScalarData("oxideFraction");
+    auto materials = cellSet.getScalarData("Material");
+
+#pragma omp parallel for
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isMaterial((*materials)[i], substrate) ||
+          isMaterial((*materials)[i], oxide)) {
+        T C = (*oxidant)[i];
+        if (C > 1e-12) {
+          // Recalculate rate k
+          T k = reactionRates[i];
+
+          // Explicit Euler update
+          T dFrac = k * C * dt;
+
+          (*oxideFractions)[i] += dFrac;
+
+          // Clamp to 1.0 (100% Oxide)
+          if ((*oxideFractions)[i] > 1.0)
+            (*oxideFractions)[i] = 1.0;
+
+          if ((*oxideFractions)[i] > 0.5) {
+            (*materials)[i] = oxide;
+          }
+        }
+      }
+    }
+  }
+};
 
 // -----------------------------------------------------------------------------
 // MAIN
 // -----------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
-  cs::Logger::setLogLevel(cs::LogLevel::INTERMEDIATE);
+  cs::Logger::setLogLevel(cs::LogLevel::DEBUG);
 
-  cs::util::Parameters params;
-  if (argc > 1) {
-    params.readConfigFile(argv[1]);
-  } else {
+  if (argc < 2) {
     std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
     return 1;
   }
-  omp_set_num_threads(params.get<int>("numThreads"));
 
-  SolutionData solution;
-
-  auto matMap = cs::SmartPointer<ls::MaterialMap>::New();
-  auto levelSets = geometry::makeStructure<T, D>(
-      params, matMap, substrateMaterial, maskMaterial);
-
-  cs::DenseCellSet<T, D> cellSet;
-  T depth = params.get("substrateHeight") + params.get("coverHeight") + 10.;
-  cellSet.setCellSetPosition(true);
-  cellSet.setCoverMaterial(coverMaterial);
-  cellSet.fromLevelSets(levelSets, matMap, depth);
-
-  cellSet.buildNeighborhood();
-
-  // 1. Load E-Field (Now passing params for spatial mapping)
-  addElectricField(cellSet, params);
-
-  // 2. Initialize Fields
-  initOxidationFields(cellSet, params);
-  cellSet.writeVTU("oxidation_initial.vtu");
-
-  initCellMapping(solution, cellSet);
-
-  // Time Stepping
-  T duration = params.get("duration");
-  T dx = params.get("gridDelta");
-  T D_oxide = params.get("diffusivityOxide");
-
-  T dt =
-      std::min(dx * dx / (D_oxide * 2 * D) * params.get("timeStabilityFactor"),
-               duration);
-  dt *= 5.0;
-
-  T time = 0.;
-  int step = 0;
-
-  std::cout << "Starting oxidation simulation..." << std::endl;
-  std::cout << "Initial dt: " << dt << std::endl;
-
-  while (time < duration) {
-    if (time + dt > duration)
-      dt = duration - time;
-
-    // A. Assemble Matrix
-    assembleMatrix(solution, cellSet, params, dt);
-    solution.solver.compute(solution.systemMatrix);
-
-    if (solution.solver.info() != Eigen::Success) {
-      cs::Logger::getInstance().addError("Decomposition failed.").print();
-      break;
-    }
-
-    // B. Solve Diffusion (Pass dt/params for boundary flux)
-    assembleRHS(solution, cellSet, params, dt);
-    solveDiffusionStep(solution, cellSet);
-
-    // C. Update Oxide State
-    updateOxideFraction(cellSet, params, dt);
-
-    time += dt;
-    step++;
-
-    if (step % 10 == 0) {
-      std::cout << "Step " << step << " Time: " << time << std::endl;
-      cellSet.writeVTU("oxidation_step_" + std::to_string(step) + ".vtu");
-    }
-  }
-
-  cellSet.writeVTU("oxidation_final.vtu");
-  std::cout << "Done." << std::endl;
+  OxidationSimulation simulation(argv[1]);
+  simulation.apply();
 }
