@@ -123,6 +123,22 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def("setScalarData", &DenseCellSet<T, D>::setScalarData,
            pybind11::arg("name"), pybind11::arg("newData"),
            "Overwrite the scalar data associated with 'name' with a new array.")
+      .def(
+          "setScalarData",
+          [](DenseCellSet<T, D> &cs, std::string name,
+             pybind11::array_t<T, pybind11::array::c_style> arr) {
+            auto buf = arr.request();
+            if (buf.ndim != 1)
+              throw std::runtime_error(
+                  "setScalarData: expected a 1-D array");
+            cs.setScalarData(name,
+                             std::vector<T>(static_cast<T *>(buf.ptr),
+                                            static_cast<T *>(buf.ptr) +
+                                                buf.shape[0]));
+          },
+          pybind11::arg("name"), pybind11::arg("newData"),
+          "Overwrite scalar data from a numpy array (avoids Python-side "
+          ".tolist() conversion).")
       .def("setVectorData", &DenseCellSet<T, D>::setVectorData,
            pybind11::arg("name"), pybind11::arg("newData"),
            "Overwrite the vector data associated with 'name' with a new array.")

@@ -23,7 +23,7 @@ template <class T, int D> class Tracing {
   std::unique_ptr<AbstractParticle<T>> mParticle = nullptr;
 
   RTCDevice mDevice;
-  viennaray::Geometry<T, D> mGeometry;
+  std::unique_ptr<viennaray::Geometry<T, D>> mGeometry;
   size_t mNumberOfRaysPerPoint = 0;
   size_t mNumberOfRaysFixed = 1000;
   T mGridDelta = 0;
@@ -45,18 +45,18 @@ public:
     // TODO: currently only periodic boundary conditions are implemented in
     // csTracingKernel
     for (int i = 0; i < D; i++)
-      mBoundaryConditions[i] = viennaray::BoundaryCondition::PERIODIC;
+      mBoundaryConditions[i] = viennaray::BoundaryCondition::PERIODIC_BOUNDARY;
   }
 
   ~Tracing() {
-    mGeometry.releaseGeometry();
+    if (mGeometry) mGeometry->releaseGeometry();
     rtcReleaseDevice(mDevice);
   }
 
   void apply() {
     createGeometry();
     initMemoryFlags();
-    auto boundingBox = mGeometry.getBoundingBox();
+    auto boundingBox = mGeometry->getBoundingBox();
     rayInternal::adjustBoundingBox<T, D>(
         boundingBox, mSourceDirection, mGridDelta * rayInternal::DiskFactor<D>);
     auto traceSettings = rayInternal::getTraceSettings(mSourceDirection);
@@ -77,9 +77,9 @@ public:
 
     if (usePointSource) {
       auto raySource = PointSource<T>(pointSourceOrigin, pointSourceDirection,
-                                      traceSettings, mGeometry.getNumPoints());
+                                      traceSettings, mGeometry->getNumPrimitives());
 
-      TracingKernel<T, D>(mDevice, mGeometry, boundary, raySource, mParticle,
+      TracingKernel<T, D>(mDevice, *mGeometry, boundary, raySource, mParticle,
                           mNumberOfRaysPerPoint, mNumberOfRaysFixed,
                           mUseRandomSeeds, mRunNumber++, cellSet,
                           excludeMaterialId - 1)
@@ -87,9 +87,9 @@ public:
     } else {
       auto raySource = viennaray::SourceRandom<T, D>(
           boundingBox, mParticle->getSourceDistributionPower(), traceSettings,
-          mGeometry.getNumPoints(), usePrimaryDirection, orthoBasis);
+          mGeometry->getNumPrimitives(), usePrimaryDirection, orthoBasis);
 
-      TracingKernel<T, D>(mDevice, mGeometry, boundary, raySource, mParticle,
+      TracingKernel<T, D>(mDevice, *mGeometry, boundary, raySource, mParticle,
                           mNumberOfRaysPerPoint, mNumberOfRaysFixed,
                           mUseRandomSeeds, mRunNumber++, cellSet,
                           excludeMaterialId - 1)
@@ -243,9 +243,11 @@ private:
     auto normals = *diskMesh->getCellData().getVectorData("Normals");
     auto materialIds = *diskMesh->getCellData().getScalarData("MaterialIds");
     mGridDelta = levelSets.back()->getGrid().getGridDelta();
-    mGeometry.initGeometry(mDevice, points, normals,
-                           mGridDelta * rayInternal::DiskFactor<D>);
-    mGeometry.setMaterialIds(materialIds);
+    // TODO: Instantiate the concrete geometry class here. 'Geometry' is abstract.
+    // mGeometry = std::make_unique<viennaray::ConcreteGeometryClass<T, D>>(viennaray::GeometryType::DISK);
+    // mGeometry->initGeometry(mDevice, points, normals,
+    //                        mGridDelta * rayInternal::DiskFactor<D>);
+    if (mGeometry) mGeometry->setMaterialIds(materialIds);
   }
 
   inline Vec3D<T> calcMidPoint(const Vec3D<T> &minNode) {

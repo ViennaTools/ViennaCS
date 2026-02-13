@@ -88,7 +88,9 @@ public:
 
         auto originAndDirection = mSource.getOriginAndDirection(idx, RngState);
         rayInternal::fillRayPosition(rayHit.ray, originAndDirection[0]);
-        rayInternal::fillRayDirection(rayHit.ray, originAndDirection[1]);
+        rayHit.ray.dir_x = static_cast<float>(originAndDirection[1][0]);
+        rayHit.ray.dir_y = static_cast<float>(originAndDirection[1][1]);
+        rayHit.ray.dir_z = static_cast<float>(originAndDirection[1][2]);
 
 #ifdef VIENNARAY_USE_RAY_MASKING
         rayHit.ray.mask = -1;
@@ -211,7 +213,9 @@ public:
 
           // Update ray direction and origin
           rayInternal::fillRayPosition(rayHit.ray, hitPoint);
-          rayInternal::fillRayDirection(rayHit.ray, fillnDirection.second);
+          rayHit.ray.dir_x = static_cast<float>(fillnDirection.second[0]);
+          rayHit.ray.dir_y = static_cast<float>(fillnDirection.second[1]);
+          rayHit.ray.dir_z = static_cast<float>(fillnDirection.second[2]);
 
         } while (reflect);
       } // end ray tracing for loop

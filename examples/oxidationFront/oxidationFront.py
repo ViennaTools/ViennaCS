@@ -1,6 +1,7 @@
 import os
 import sys
 import numpy as np
+from scipy.sparse import coo_matrix
 
 import geometry
 
@@ -133,15 +134,15 @@ class OxidationSimulation:
         Copies Python numpy arrays to C++ memory.
         Must be called before writeVTU so the file contains current data.
         """
-        self.cell_set.setScalarData("oxidant", self.oxidant.tolist())
-        self.cell_set.setScalarData("oxideFraction", self.oxide_fraction.tolist())
-        self.cell_set.setScalarData("Material", self.materials.tolist())
+        self.cell_set.setScalarData("oxidant", self.oxidant)
+        self.cell_set.setScalarData("oxideFraction", self.oxide_fraction)
+        self.cell_set.setScalarData("Material", self.materials.astype(float))
 
     def _precompute_efield_indices(self):
         """
         Pre-compute indices for E-field mapping to avoid re-calculation every step.
         """
-        csv_dx = 1.0  # Should match writeCSV.py (grid of Efield source)
+        csv_dx = 1.0  # Should match CSV grid (grid of Efield source)
         csv_extent = 150.0
         nx = int(csv_extent / csv_dx)
 
@@ -159,18 +160,23 @@ class OxidationSimulation:
             iy = np.clip((gen_y / csv_dx).astype(int), 0, nx - 1)
             self.efield_grid_indices = iy * nx + ix
 
-    def _update_electric_field(self, time):
-        """
-        Populates self.e_field_1d with electric field magnitude values.
+    def _load_efield_data(self, time):
+        """Return a flat array of E-field magnitude values on the external grid.
 
-        This method currently reads data from a CSV file, but serves as a template for
-        integrating other data sources. The process involves:
-        1. Fetching E-field data (e.g., from file, database, or calculation).
-        2. Mapping the external data to the simulation grid.
+        Override this method to supply E-field data from a different source
+        (database, solver, analytical function, etc.).  The returned array is
+        indexed by `self.efield_grid_indices` (pre-computed once from cell
+        center coordinates) to map values onto the simulation cells.
 
-        The mapping uses `self.efield_grid_indices`, which is pre-computed in
-        `_precompute_efield_indices` and contains the index in the external data source
-        corresponding to each cell in the simulation domain.
+        Parameters
+        ----------
+        time : float
+            Current simulation time.
+
+        Returns
+        -------
+        np.ndarray
+            1-D array of E-field magnitudes on the external data grid.
         """
         filename = self.p['EfieldFile']
         if not os.path.exists(filename):
@@ -178,30 +184,32 @@ class OxidationSimulation:
             sys.exit(1)
 
         try:
-            # Load CSV - expect format matching C++ expectations
             raw_data = np.genfromtxt(filename, delimiter=',')
-            # print(f"Loaded E-field data: {raw_data.shape}")
         except Exception as e:
             print(f"[ERROR] Reading E-field: {e}")
             sys.exit(1)
 
-        # Extract E-field magnitude (matches C++ lines 171-178)
-        # For D=2: expect x, E (2 cols) -> take column 1
-        # For D=3: expect x, y, E (3 cols) -> take column 2
+        # Extract E-field magnitude column
+        # For D=2: expect x, E (2 cols) -> column 1
+        # For D=3: expect x, y, E (3 cols) -> column 2
         if len(raw_data.shape) == 1:
-            # Single row
-            e_field_values = np.array([raw_data[-1]])
-        else:
-            # Multiple rows
-            if self.dimension == 2 and raw_data.shape[1] >= 2:
-                e_field_values = raw_data[:, 1]
-            elif self.dimension == 3 and raw_data.shape[1] >= 3:
-                e_field_values = raw_data[:, 2]
-            else:
-                # Fallback: take last column
-                e_field_values = raw_data[:, -1] if raw_data.shape[1] > 1 else raw_data[:, 0]
+            return np.array([raw_data[-1]])
 
-        # Map E-field to cells
+        if self.dimension == 2 and raw_data.shape[1] >= 2:
+            return raw_data[:, 1]
+        elif self.dimension == 3 and raw_data.shape[1] >= 3:
+            return raw_data[:, 2]
+        else:
+            return raw_data[:, -1] if raw_data.shape[1] > 1 else raw_data[:, 0]
+
+    def _update_electric_field(self, time):
+        """Map external E-field data onto simulation cells.
+
+        Calls `_load_efield_data` to obtain the raw values, then uses the
+        pre-computed `efield_grid_indices` to scatter them to cells.
+        """
+        e_field_values = self._load_efield_data(time)
+
         valid_mask = (self.efield_grid_indices >= 0) & (self.efield_grid_indices < len(e_field_values))
         self.e_field_1d[:] = 0.0
         self.e_field_1d[valid_mask] = e_field_values[self.efield_grid_indices[valid_mask]]
@@ -242,6 +250,51 @@ class OxidationSimulation:
 
         print(f"Active cells: {self.n_dof} / {self.num_cells} (CoreActive: {np.sum(is_core_active)})")
 
+        self._build_diffusion_structure()
+
+    def _build_diffusion_structure(self):
+        """Pre-compute sparse matrix structure for the diffusion solver.
+
+        Extracts edge lists (active-to-active neighbor pairs) and counts
+        ambient neighbors per active cell for Dirichlet BC handling.
+        The sparsity pattern is reused each step; only the values (which
+        depend on oxide_fraction) are recomputed in solve_step.
+        """
+        active_idxs = self.active_indices
+        self.ambient_neighbor_count = np.zeros(self.num_cells, dtype=np.int32)
+
+        if len(active_idxs) == 0:
+            self.diff_rows = np.array([], dtype=np.int64)
+            self.diff_cols = np.array([], dtype=np.int64)
+            return
+
+        nbs = self.neighbor_map[active_idxs]
+        valid_nb = nbs >= 0
+        safe_nbs = np.where(valid_nb, nbs, 0)
+        mat_nbs = self.materials[safe_nbs]
+
+        rows_list = []
+        cols_list = []
+
+        for k in range(self.max_neighbors):
+            valid = valid_nb[:, k]
+            mat_n = mat_nbs[:, k]
+            idx_n = safe_nbs[:, k]
+
+            # Count ambient neighbors per active cell
+            is_amb = (mat_n == MAT_AMBIENT) & valid
+            np.add.at(self.ambient_neighbor_count, active_idxs[is_amb], 1)
+
+            # Collect active-to-active edges (exclude ambient and mask)
+            is_active_nb = (self.is_active_cell[idx_n] & valid
+                            & (mat_n != MAT_AMBIENT) & (mat_n != MAT_MASK))
+            if np.any(is_active_nb):
+                rows_list.append(active_idxs[is_active_nb])
+                cols_list.append(idx_n[is_active_nb])
+
+        self.diff_rows = np.concatenate(rows_list) if rows_list else np.array([], dtype=np.int64)
+        self.diff_cols = np.concatenate(cols_list) if cols_list else np.array([], dtype=np.int64)
+
     def solve_step(self, dt):
         """
         Solve one time step using explicit finite difference.
@@ -264,47 +317,41 @@ class OxidationSimulation:
         available_si = np.maximum(0.0, 1.0 - self.oxide_fraction)
         reaction_rates = k_base * (1.0 + alpha * E_mag) * available_si
 
-        # --- Diffusion (Active Cells Only) ---
+        # --- Diffusion (Active Cells Only) via Sparse Matrix ---
         active_idxs = self.active_indices
         if len(active_idxs) > 0:
             C_old = self.oxidant[active_idxs]
             k = reaction_rates[active_idxs]
-            
-            # Center Diffusivity: D = D_ox * oxide_frac
-            D_center = D_ox * self.oxide_fraction[active_idxs]
-            
-            # Neighbors
-            nbs = self.neighbor_map[active_idxs] # (N_active, max_nb)
-            valid_nb = nbs >= 0
-            safe_nbs = np.where(valid_nb, nbs, 0)
-            
-            mat_nbs = self.materials[safe_nbs]
-            C_nbs = self.oxidant[safe_nbs]
-            ox_nbs = self.oxide_fraction[safe_nbs]
-            
-            diffusion_term = np.zeros_like(C_old)
-            
-            # Iterate over neighbor columns
-            for i in range(self.max_neighbors):
-                valid = valid_nb[:, i]
-                mat_n = mat_nbs[:, i]
-                idx_n = safe_nbs[:, i]
-                
-                # Ambient BC
-                is_amb = (mat_n == MAT_AMBIENT) & valid
-                diffusion_term[is_amb] += D_ox * (ambient_oxidant - C_old[is_amb])
-                
-                # Active Neighbor
-                is_active_nb = self.is_active_cell[idx_n] & valid & (mat_n != MAT_AMBIENT) & (mat_n != MAT_MASK)
-                
-                if np.any(is_active_nb):
-                    D_n = D_ox * ox_nbs[is_active_nb, i]
-                    D_eff = 0.5 * (D_center[is_active_nb] + D_n)
-                    diffusion_term[is_active_nb] += D_eff * (C_nbs[is_active_nb, i] - C_old[is_active_nb])
+            n = self.num_cells
 
-            # Explicit update
-            next_oxidant_active = C_old + dtdx2 * diffusion_term - dt * k * C_old
-            self.oxidant[active_idxs] = np.maximum(0.0, next_oxidant_active)
+            if len(self.diff_rows) > 0:
+                # Off-diagonal values: D_eff = 0.5 * (D_ox*frac_i + D_ox*frac_j)
+                D_eff = 0.5 * D_ox * (self.oxide_fraction[self.diff_rows]
+                                       + self.oxide_fraction[self.diff_cols])
+
+                # Diagonal: -(sum of off-diag per row) - ambient_count * D_ox
+                diag = np.zeros(n)
+                np.add.at(diag, self.diff_rows, -D_eff)
+                diag[active_idxs] -= self.ambient_neighbor_count[active_idxs] * D_ox
+
+                # Assemble sparse matrix (off-diagonal + diagonal)
+                all_rows = np.concatenate([self.diff_rows, active_idxs])
+                all_cols = np.concatenate([self.diff_cols, active_idxs])
+                all_vals = np.concatenate([D_eff, diag[active_idxs]])
+
+                A = coo_matrix((all_vals, (all_rows, all_cols)),
+                               shape=(n, n)).tocsr()
+                diff_term = A.dot(self.oxidant)[active_idxs]
+            else:
+                # No active-active edges, only ambient BC contributions
+                diff_term = -self.ambient_neighbor_count[active_idxs] * D_ox * C_old
+
+            # Ambient source (Dirichlet BC)
+            diff_term += self.ambient_neighbor_count[active_idxs] * D_ox * ambient_oxidant
+
+            # Explicit Euler update
+            self.oxidant[active_idxs] = np.maximum(
+                0.0, C_old + dtdx2 * diff_term - dt * k * C_old)
 
         # --- Update Oxide Fraction ---
         # Vectorized update for all substrate/oxide cells with oxidant
@@ -323,6 +370,9 @@ class OxidationSimulation:
             new_oxides = (self.oxide_fraction[idxs_update] > 0.5) & (self.materials[idxs_update] == MAT_SUBSTRATE)
             if np.any(new_oxides):
                 self.materials[idxs_update[new_oxides]] = MAT_OXIDE
+                return True
+
+        return False
 
     def run(self):
         """
@@ -338,21 +388,21 @@ class OxidationSimulation:
 
         time = 0.0
         step = 0
+        topology_rebuild_interval = int(self.p.get('topologyRebuildInterval', 5))
+        need_topology_rebuild = True
         print(f"Starting simulation. Duration: {duration}, initial dt: {dt_base:.4f}")
 
         while time < duration:
-            # Update active cells
-            self._build_topology()
+            # Rebuild topology when material changed or every N steps
+            if need_topology_rebuild or step % topology_rebuild_interval == 0:
+                self._build_topology()
+                need_topology_rebuild = False
 
             # Update E-field
             self._update_electric_field(time)
 
             # Adaptive time stepping based on max reaction rate
-            # dt depends on:
-            # 1. E-field at active cells (spatially varying)
-            # 2. Available silicon (decreases as oxidation proceeds)
             if len(self.active_indices) > 0:
-                # Calculate k for active cells to determine dt
                 k_base = self.p['reactionRateConstant']
                 alpha = self.p['eFieldInfluence']
                 E_mag = np.abs(self.e_field_1d[self.active_indices])
@@ -369,12 +419,13 @@ class OxidationSimulation:
             if time + dt > duration:
                 dt = duration - time
 
-            self.solve_step(dt)
+            material_changed = self.solve_step(dt)
+            if material_changed:
+                need_topology_rebuild = True
             time += dt
             step += 1
 
             if step % 10 == 0:
-                # Sync and write output
                 self._sync_data()
                 print(f"Step {step}, Time: {time:.4f}, dt: {dt:.4f}, max_k: {max_k:.4f}")
                 self.cell_set.writeVTU(f"oxidation_step_{step}.vtu")

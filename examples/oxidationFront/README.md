@@ -20,13 +20,19 @@ The simulation models the following physical processes:
 *   **`plotEfield.py`**: A utility script to visualize the input Electric Field from the CSV file.
 *   **`oxidationFront.cpp`** and **`geometry.hpp`**: The C++ equivalent of this simulation (for reference).
 
+The content of the `Efield.csv` file which contains the 3D Electric Field magnitude distribution with columns (x, y, E) is shown below:
+
+<img src="Efield.png" width="600" alt="Electric Field Distribution">
+
+
 ## Prerequisites
 
 *   Python 3.x
 *   **ViennaLS** (Python bindings)
 *   **ViennaCS** (Python bindings)
 *   `numpy`
-*   `matplotlib` (optional, for `plot_efield.py`)
+*   `scipy` (sparse matrix diffusion solver)
+*   `matplotlib` (optional, for `plotEfield.py`)
 
 ## Installation
 
@@ -48,7 +54,7 @@ To ensure binary compatibility between ViennaLS and ViennaCS (C++ ABI), it is cr
 3.  **Install Dependencies & Build**:
     ```bash
     # Install build requirements
-    pip install scikit-build-core pybind11 numpy matplotlib
+    pip install scikit-build-core pybind11 numpy scipy matplotlib
 
     # Install ViennaLS from source
     pip install git+https://github.com/ViennaTools/ViennaLS.git@v5.5.0
@@ -83,6 +89,7 @@ To ensure binary compatibility between ViennaLS and ViennaCS (C++ ABI), it is cr
     *   `numThreads`: Number of threads for parallel execution.
     *   `timeStabilityFactor`: Safety factor for time step calculation (0 < factor <= 1).
     *   `duration`: Total simulation time.
+    *   `topologyRebuildInterval`: How often to rebuild the active cell topology (in steps). The topology is also rebuilt whenever a material change occurs. Default: `5`. *(Python only)*
 
     **Physics Parameters:**
     *   `oxidantDiffusivity`: Diffusion coefficient of oxidant in SiO2.
@@ -113,14 +120,12 @@ These level sets are then converted into a `DenseCellSet` by ViennaCS, which cre
 
 ### Finite Difference Solver (`oxidationFront.py`)
 The solver uses a **Narrow Band** approach for efficiency:
-1.  **Active Cell Tracking**: Only cells that are part of the reaction front (Silicon/Oxide interface) or have non-zero oxidant concentration are solved. This list is updated dynamically.
-2.  **Vectorization**: The Python implementation uses `numpy` vectorization to perform diffusion and reaction updates on all active cells simultaneously, significantly speeding up the calculation compared to Python loops.
+1.  **Active Cell Tracking**: Only cells that are part of the reaction front (Silicon/Oxide interface) or have non-zero oxidant concentration are solved. The topology is rebuilt when a material transition occurs or every `topologyRebuildInterval` steps (default 5), avoiding redundant recomputation.
+2.  **Sparse Matrix Diffusion**: The diffusion operator is assembled as a `scipy` CSR sparse matrix from pre-computed edge lists and per-step diffusivity values. Each time step reduces to a single sparse matrix-vector multiply (`A.dot(oxidant)`), which is significantly faster than per-neighbor Python loops, especially in 3D.
 3.  **Adaptive Time Stepping**: The time step `dt` is dynamically adjusted based on the stability criteria for diffusion (Von Neumann stability) and the maximum current reaction rate to ensure numerical stability.
 
 ### Electric Field
 The electric field data is loaded from `Efield.csv`. The simulation maps this external data onto the simulation grid. The reaction rate $k$ is calculated as:
-
-<img src="Efield.png" width="600" alt="Electric Field Distribution">
 
 $$ k = k_{base} \cdot (1 + \alpha \cdot |E|) \cdot (1 - \text{oxideFraction}) $$
 
@@ -128,6 +133,16 @@ Where $|E|$ is the local electric field magnitude.
 
 ## Customization
 
-To use your own Electric Field data:
-1.  Replace `Efield.csv` with your data.
-2.  If the format differs, modify the `_update_electric_field` method in `oxidationFront.py` to parse your file format correctly.
+### Custom Electric Field Source
+The E-field loading is separated from the grid mapping to simplify integration of custom data sources. Override the `_load_efield_data(time)` method in a subclass:
+
+```python
+class MySimulation(OxidationSimulation):
+    def _load_efield_data(self, time):
+        # Return a flat numpy array of E-field magnitudes on the external grid.
+        # The array is indexed by self.efield_grid_indices (pre-computed from
+        # cell center coordinates) to map values onto simulation cells.
+        return my_solver.get_efield(time)
+```
+
+The default implementation reads from the CSV file specified by `EfieldFile` in the config. To use a different format, override only `_load_efield_data` while the spatial mapping in `_update_electric_field` stays unchanged.

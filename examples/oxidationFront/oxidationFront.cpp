@@ -49,34 +49,31 @@ public:
     params.readConfigFile(configFile);
     omp_set_num_threads(params.get<int>("numThreads"));
 
+    // Cache parameters
+    k_base = params.get("reactionRateConstant");
+    alpha = params.get("eFieldInfluence");
+    D_ox = params.get("oxidantDiffusivity");
+    ambientOxidant = params.get("ambientOxidant");
+    dx = params.get("gridDelta");
+    duration = params.get("duration");
+    timeStabilityFactor = params.get("timeStabilityFactor");
+
     // Generate Geometry and Cell Set
     geometry::makeCellSet<T, D>(cellSet, params, substrate, mask, ambient);
     cellSet.buildNeighborhood();
 
     // Initialize Fields
     initOxidationFields();
+    precomputeEFieldIndices();
     cellSet.writeVTU("oxidation_initial.vtu");
   }
 
   void apply() {
-    T duration = params.get("duration");
-    T dx = params.get("gridDelta");
-    T D_oxide = params.get("oxidantDiffusivity");
-
-    // Estimate stable time step (Von Neumann stability for diffusion)
-    T dt = std::min(dx * dx / (D_oxide * 2 * D) *
-                        params.get("timeStabilityFactor"),
-                    duration);
-
     T time = 0.;
     int step = 0;
 
-    std::cout << "Starting oxidation simulation..." << std::endl;
-    std::cout << "Initial dt: " << dt << std::endl;
-
+    reactionRates.resize(cellSet.getNumberOfCells());
     while (time < duration) {
-      if (time + dt > duration)
-        dt = duration - time;
 
       // 0. Update Active Cells (Dynamic Domain)
       updateActiveCells();
@@ -85,10 +82,7 @@ public:
       updateElectricField(time);
 
       // Pre-calculate reaction rates for the current time step
-      std::vector<T> reactionRates(cellSet.getNumberOfCells(), 0.0);
-      if (reactionRates.size() != cellSet.getNumberOfCells()) {
-        reactionRates.resize(cellSet.getNumberOfCells());
-      }
+      std::fill(reactionRates.begin(), reactionRates.end(), 0.0);
       calculateReactionRates(reactionRates);
 
       // Calculate adaptive time step based on Diffusion and Reaction stability
@@ -99,10 +93,10 @@ public:
           max_k = reactionRates[i];
       }
 
-      T dt_diff = dx * dx / (D_oxide * 2 * D);
+      T dt_diff = dx * dx / (D_ox * 2 * D);
       T dt_react = (max_k > 1e-12) ? (1.0 / max_k) : duration;
 
-      T dt = std::min(dt_diff, dt_react) * params.get("timeStabilityFactor");
+      T dt = std::min(dt_diff, dt_react) * timeStabilityFactor;
 
       if (time + dt > duration)
         dt = duration - time;
@@ -136,10 +130,20 @@ private:
   cs::util::Parameters params;
   cs::DenseCellSet<T, D> cellSet;
   std::vector<int> activeCells;
-  std::vector<bool> isActiveCell;
+  std::vector<char> isActiveCell;
   std::vector<T> nextOxidant;
   std::vector<T> reactionRates;
   std::vector<T> electricField1D;
+  std::vector<int> efieldIndices;
+
+  // Cached parameters
+  T k_base;
+  T alpha;
+  T D_ox;
+  T ambientOxidant;
+  T dx;
+  T duration;
+  T timeStabilityFactor;
 
   // Updates E-field vectors. In this toy model, it reads from a CSV.
   void updateElectricField(T time) {
@@ -190,7 +194,6 @@ private:
     auto oxidant = cellSet.addScalarData("oxidant", 0.);
     auto oxideFraction = cellSet.addScalarData("oxideFraction", 0.);
     auto materials = cellSet.getScalarData("Material");
-    const T ambientOxidant = params.get("ambientOxidant");
 
     // Set initial boundary condition: Cover material (Gas) has fixed oxidant
     // concentration
@@ -202,16 +205,40 @@ private:
     }
   }
 
+  void precomputeEFieldIndices() {
+    efieldIndices.resize(cellSet.getNumberOfCells());
+    const T csvDx = 1.0; // Should match writeCSV.py
+    const T csvExtent = 150.0;
+    const int nx = static_cast<int>(csvExtent / csvDx);
+
+#pragma omp parallel for
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      auto center = cellSet.getCellCenter(i);
+      T gen_x = center[0] + (csvExtent / 2.0);
+      int ix = static_cast<int>(gen_x / csvDx);
+
+      int idx = -1;
+      if constexpr (D == 2) {
+        idx = ix;
+      } else {
+        T gen_y = center[1] + (csvExtent / 2.0);
+        int iy = static_cast<int>(gen_y / csvDx);
+        if (iy >= 0 && iy < nx) idx = iy * nx + ix;
+      }
+      efieldIndices[i] = idx;
+    }
+  }
+
   // Updates the mapping from global cell IDs to linear system row indices.
   void updateActiveCells() {
     auto materials = cellSet.getScalarData("Material");
     auto oxideFractions = cellSet.getScalarData("oxideFraction");
 
     activeCells.clear();
-    isActiveCell.assign(cellSet.getNumberOfCells(), false);
+    isActiveCell.assign(cellSet.getNumberOfCells(), 0);
 
     // Track which cells are "Core Active" (Oxide or Source)
-    std::vector<bool> isCoreActive(cellSet.getNumberOfCells(), false);
+    std::vector<char> isCoreActive(cellSet.getNumberOfCells(), 0);
 
 #pragma omp parallel for
     for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
@@ -232,6 +259,7 @@ private:
     }
 
     // Expand to neighbors to allow front propagation
+#pragma omp parallel for
     for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
       if (isMaterial((*materials)[i], substrate) ||
           isMaterial((*materials)[i], oxide)) {
@@ -247,19 +275,19 @@ private:
         }
 
         if (shouldSolve) {
-          activeCells.push_back(i);
-          isActiveCell[i] = true;
+          isActiveCell[i] = 1;
         }
       }
+    }
+
+    for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
+      if (isActiveCell[i]) activeCells.push_back(i);
     }
   }
 
   // Calculates the reaction rate k based on the local E-field and oxide
   // fraction.
   T getReactionRate(T Ey, T oxideFrac) {
-    const T k_base = params.get("reactionRateConstant");
-    const T alpha = params.get("eFieldInfluence");
-
     // Reaction slows down as Silicon is consumed (oxideFrac approaches 1.0)
     T availableSi = std::max(0.0, 1.0 - oxideFrac);
 
@@ -268,7 +296,7 @@ private:
   }
 
   // Calculates diffusion coefficient.
-  T getDiffusivity(int material, T oxideFrac, T D_ox) {
+  T getDiffusivity(int material, T oxideFrac) {
     if (isMaterial(material, substrate) || isMaterial(material, oxide)) {
       return D_ox * oxideFrac;
     }
@@ -280,29 +308,13 @@ private:
     auto oxideFractions = cellSet.getScalarData("oxideFraction");
     auto materials = cellSet.getScalarData("Material");
 
-    // Define CSV grid parameters for E-field lookup
-    const T csvDx = 1.0; // Should match writeCSV.py
-    const T csvExtent = 150.0;
-    const int nx = static_cast<int>(csvExtent / csvDx);
-
 #pragma omp parallel for
     for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
       if (isMaterial((*materials)[i], substrate) ||
           isMaterial((*materials)[i], oxide)) {
 
-        // E-field lookup based on cell's coordinates
-        auto center = cellSet.getCellCenter(i);
-        T gen_x = center[0] + (csvExtent / 2.0);
-        int ix = static_cast<int>(gen_x / csvDx);
-        
-        int idx = -1;
-        if constexpr (D == 2) {
-            idx = ix;
-        } else {
-            T gen_y = center[1] + (csvExtent / 2.0);
-            int iy = static_cast<int>(gen_y / csvDx);
-            if (iy >= 0 && iy < nx) idx = iy * nx + ix;
-        }
+        // E-field lookup using precomputed index
+        int idx = efieldIndices[i];
 
         T Ey = 0.0;
         if (idx >= 0 && static_cast<size_t>(idx) < electricField1D.size()) {
@@ -326,9 +338,6 @@ private:
       nextOxidant.resize(cellSet.getNumberOfCells());
     }
 
-    const T ambientOxidant = params.get("ambientOxidant");
-    const T D_ox = params.get("oxidantDiffusivity");
-    const T dx = cellSet.getGridDelta();
     const T dtdx2 = dt / (dx * dx);
 
 #pragma omp parallel for
@@ -337,7 +346,7 @@ private:
       T C_old = (*oxidant)[i];
       T k = reactionRates[i];
       T diffusion_term = 0.0;
-      T D_center = getDiffusivity((*materials)[i], (*oxideFractions)[i], D_ox);
+      T D_center = getDiffusivity((*materials)[i], (*oxideFractions)[i]);
 
       const auto &neighbors = cellSet.getNeighbors(i);
       for (auto n : neighbors) {
@@ -351,7 +360,7 @@ private:
           diffusion_term += D_ox * (ambientOxidant - C_old);
         } else if (isActiveCell[n]) {
           // Substrate/Oxide neighbor
-          T D_neighbor = getDiffusivity(mat_n, (*oxideFractions)[n], D_ox);
+          T D_neighbor = getDiffusivity(mat_n, (*oxideFractions)[n]);
           T D_eff = 0.5 * (D_center + D_neighbor);
           diffusion_term += D_eff * ((*oxidant)[n] - C_old);
         }
