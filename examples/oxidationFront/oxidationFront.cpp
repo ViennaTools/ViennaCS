@@ -57,6 +57,11 @@ public:
     dx = params.get("gridDelta");
     duration = params.get("duration");
     timeStabilityFactor = params.get("timeStabilityFactor");
+    try {
+      topologyRebuildInterval = params.get<int>("topologyRebuildInterval");
+    } catch (...) {
+      topologyRebuildInterval = 5;
+    }
 
     // Generate Geometry and Cell Set
     geometry::makeCellSet<T, D>(cellSet, params, substrate, mask, ambient);
@@ -71,12 +76,16 @@ public:
   void apply() {
     T time = 0.;
     int step = 0;
+    bool materialChanged = true;
 
     reactionRates.resize(cellSet.getNumberOfCells());
     while (time < duration) {
 
       // 0. Update Active Cells (Dynamic Domain)
-      updateActiveCells();
+      if (step % topologyRebuildInterval == 0 || materialChanged) {
+        updateActiveCells();
+        materialChanged = false;
+      }
 
       // Update E-field (Database access simulation)
       updateElectricField(time);
@@ -109,7 +118,9 @@ public:
       solveDiffusionExplicit(dt, reactionRates);
 
       // C. Update Oxide State
-      updateOxideFraction(dt, reactionRates);
+      if (updateOxideFraction(dt, reactionRates)) {
+        materialChanged = true;
+      }
 
       time += dt;
       step++;
@@ -144,6 +155,7 @@ private:
   T dx;
   T duration;
   T timeStabilityFactor;
+  int topologyRebuildInterval;
 
   // Updates E-field vectors. In this toy model, it reads from a CSV.
   void updateElectricField(T time) {
@@ -207,7 +219,7 @@ private:
 
   void precomputeEFieldIndices() {
     efieldIndices.resize(cellSet.getNumberOfCells());
-    const T csvDx = 1.0; // Should match writeCSV.py
+    const T csvDx = 1.0; 
     const T csvExtent = 150.0;
     const int nx = static_cast<int>(csvExtent / csvDx);
 
@@ -378,12 +390,13 @@ private:
   }
 
   // Updates the oxide fraction based on the calculated oxidant concentration.
-  void updateOxideFraction(T dt, const std::vector<T> &reactionRates) {
+  bool updateOxideFraction(T dt, const std::vector<T> &reactionRates) {
     auto oxidant = cellSet.getScalarData("oxidant");
     auto oxideFractions = cellSet.getScalarData("oxideFraction");
     auto materials = cellSet.getScalarData("Material");
+    int materialChanged = 0;
 
-#pragma omp parallel for
+#pragma omp parallel for reduction(+:materialChanged)
     for (int i = 0; i < cellSet.getNumberOfCells(); ++i) {
       if (isMaterial((*materials)[i], substrate) ||
           isMaterial((*materials)[i], oxide)) {
@@ -402,11 +415,15 @@ private:
             (*oxideFractions)[i] = 1.0;
 
           if ((*oxideFractions)[i] > 0.5) {
-            (*materials)[i] = oxide;
+            if (isMaterial((*materials)[i], substrate)) {
+              (*materials)[i] = oxide;
+              materialChanged = 1;
+            }
           }
         }
       }
     }
+    return materialChanged > 0;
   }
 };
 
@@ -417,11 +434,13 @@ private:
 int main(int argc, char **argv) {
   cs::Logger::setLogLevel(cs::LogLevel::DEBUG);
 
-  if (argc < 2) {
-    std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
-    return 1;
+  std::string configFilename = "config.txt";
+  if (argc >= 2) {
+    configFilename = argv[1];
+  } else {
+    std::cout << "No config file provided. Using default: " << configFilename << std::endl;
   }
 
-  OxidationSimulation simulation(argv[1]);
+  OxidationSimulation simulation(configFilename);
   simulation.apply();
 }
