@@ -1,15 +1,16 @@
-cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.14)
 project(ViennaCS_Python LANGUAGES CXX)
 
 add_custom_target(${PROJECT_NAME} ALL)
 
 # --------------------------------------------------------------------------------------------------------
 # Global CMake Configuration
-# └ As mentioned earlier we re-use the vtk python package libs, to do so we
-#   set the rpath for our python modules to point to the vtkmodules folder.
+# └ See: https://github.com/ViennaTools/ViennaPS/blob/c76e371817a797dfe2800691f00cb93317b731fa/python/CMakeLists.txt#L8
 # --------------------------------------------------------------------------------------------------------
 
 set(CMAKE_MACOSX_RPATH ON)
+
+set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
 
 if(NOT APPLE)
@@ -32,48 +33,48 @@ set(PYBIND11_FINDPYTHON ON)
 
 CPMFindPackage(
   NAME pybind11
-  VERSION 2.12.0
+  VERSION 3.0.0
   GIT_REPOSITORY "https://github.com/pybind/pybind11")
-
-# --------------------------------------------------------------------------------------------------------
-# Constants
-# --------------------------------------------------------------------------------------------------------
-
-set(VIENNACS_PYTHON_MODULE_NAME "viennacs")
-set(VIENNACS_LIBRARY_OUTPUT_DIR ${CMAKE_BINARY_DIR})
-
-if(CMAKE_LIBRARY_OUTPUT_DIRECTORY)
-  set(VIENNACS_LIBRARY_OUTPUT_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
-  message(STATUS "[ViennaCS] Using Library Output Directory for bindings")
-endif()
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Bindings
 # --------------------------------------------------------------------------------------------------------
 
-viennacore_setup_binding(viennacs2d ${VIENNACS_LIBRARY_OUTPUT_DIR})
-viennacore_setup_binding(viennacs3d ${VIENNACS_LIBRARY_OUTPUT_DIR})
+set(PKG viennacs)
+set(MOD _core)
 
-target_link_libraries(viennacs2d PRIVATE ViennaCS)
-target_link_libraries(viennacs3d PRIVATE ViennaCS)
+pybind11_add_module(${MOD} pyWrap.cpp)
+target_link_libraries(${MOD} PRIVATE ViennaCS)
+target_compile_definitions(${MOD} PRIVATE VIENNACS_MODULE_NAME=${MOD})
 
-target_compile_definitions(viennacs2d PRIVATE -DVIENNACS_PYTHON_DIMENSION=2
-                                              -DVIENNACS_MODULE_NAME=viennacs2d)
-target_compile_definitions(viennacs3d PRIVATE -DVIENNACS_PYTHON_DIMENSION=3
-                                              -DVIENNACS_MODULE_NAME=viennacs3d)
+# Put the built .so in build/<pkg> for convenience
+set_target_properties(
+  ${MOD}
+  PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${PKG}"
+             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${PKG}"
+             ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${PKG}")
+
+# Install into site-packages/<pkg>/  (RELATIVE path!)
+install(
+  TARGETS ${MOD}
+  LIBRARY DESTINATION ${PKG}
+  RUNTIME DESTINATION ${PKG}
+  ARCHIVE DESTINATION ${PKG})
+
+# Package files
+install(FILES ${CMAKE_SOURCE_DIR}/python/__init__.py DESTINATION ${PKG})
+
+add_dependencies(${PROJECT_NAME} ${MOD})
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Lib-Folder
 # --------------------------------------------------------------------------------------------------------
 
-set(VIENNACS_LIB_FOLDER "${VIENNACS_LIBRARY_OUTPUT_DIR}/viennacs.libs")
+set(VIENNACS_LIB_FOLDER ${CMAKE_BINARY_DIR}/${PKG}.libs)
 
-# Not required for both targets, one will suffice
-viennacore_setup_embree_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
-viennacore_setup_vtk_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
-viennacore_setup_tbb_env(viennacs2d "${VIENNACS_LIB_FOLDER}")
+viennacore_setup_vtk_env(${MOD} ${VIENNACS_LIB_FOLDER})
 
 install(
-  DIRECTORY "${VIENNACS_LIB_FOLDER}"
+  DIRECTORY ${VIENNACS_LIB_FOLDER}
   DESTINATION .
   OPTIONAL)

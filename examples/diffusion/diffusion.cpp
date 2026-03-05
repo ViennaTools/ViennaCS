@@ -72,13 +72,20 @@ void solveDiffusionStep(cs::DenseCellSet<T, D> &cellSet,
 int main(int argc, char **argv) {
   cs::Logger::setLogLevel(cs::LogLevel::INTERMEDIATE);
 
+  // Parse the parameters
   cs::util::Parameters params;
   if (argc > 1) {
     params.readConfigFile(argv[1]);
   } else {
-    std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
-    return 1;
+    // Try default config file
+    params.readConfigFile("config.txt");
+    if (params.m.empty()) {
+      std::cout << "No configuration file provided!" << std::endl;
+      std::cout << "Usage: " << argv[0] << " <config file>" << std::endl;
+      return 1;
+    }
   }
+
   omp_set_num_threads(params.get<int>("numThreads"));
 
   auto matMap = cs::SmartPointer<ls::MaterialMap>::New();

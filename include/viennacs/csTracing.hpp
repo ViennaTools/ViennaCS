@@ -7,7 +7,7 @@
 
 #include <lsToDiskMesh.hpp>
 #include <rayBoundary.hpp>
-#include <rayGeometry.hpp>
+#include <rayGeometryDisk.hpp>
 #include <rayParticle.hpp>
 #include <raySourceRandom.hpp>
 
@@ -23,7 +23,7 @@ template <class T, int D> class Tracing {
   std::unique_ptr<AbstractParticle<T>> mParticle = nullptr;
 
   RTCDevice mDevice;
-  viennaray::Geometry<T, D> mGeometry;
+  viennaray::GeometryDisk<T, D> mGeometry;
   size_t mNumberOfRaysPerPoint = 0;
   size_t mNumberOfRaysFixed = 1000;
   T mGridDelta = 0;
@@ -45,7 +45,7 @@ public:
     // TODO: currently only periodic boundary conditions are implemented in
     // csTracingKernel
     for (int i = 0; i < D; i++)
-      mBoundaryConditions[i] = viennaray::BoundaryCondition::PERIODIC;
+      mBoundaryConditions[i] = viennaray::BoundaryCondition::PERIODIC_BOUNDARY;
   }
 
   ~Tracing() {
@@ -76,8 +76,9 @@ public:
     }
 
     if (usePointSource) {
-      auto raySource = PointSource<T>(pointSourceOrigin, pointSourceDirection,
-                                      traceSettings, mGeometry.getNumPoints());
+      auto raySource =
+          PointSource<T>(pointSourceOrigin, pointSourceDirection, traceSettings,
+                         mGeometry.getNumPrimitives());
 
       TracingKernel<T, D>(mDevice, mGeometry, boundary, raySource, mParticle,
                           mNumberOfRaysPerPoint, mNumberOfRaysFixed,
@@ -87,7 +88,7 @@ public:
     } else {
       auto raySource = viennaray::SourceRandom<T, D>(
           boundingBox, mParticle->getSourceDistributionPower(), traceSettings,
-          mGeometry.getNumPoints(), usePrimaryDirection, orthoBasis);
+          mGeometry.getNumPrimitives(), usePrimaryDirection, orthoBasis);
 
       TracingKernel<T, D>(mDevice, mGeometry, boundary, raySource, mParticle,
                           mNumberOfRaysPerPoint, mNumberOfRaysFixed,

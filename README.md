@@ -39,8 +39,6 @@ Releases are tagged on the main branch and available in the [releases section](h
 
 * [ViennaRay](https://github.com/ViennaTools/ViennaRay)
   
-* [pybind11](https://github.com/pybind/pybind11) (only for building Python libs)
-
 The CMake configuration automatically checks if the dependencies are installed.
 If the dependencies are not found on the system, they will be built from source. To use local installations of the dependencies, the `VIENNACS_LOOKUP_DIRS` variable can be set to the installation path of the dependencies.
 
@@ -73,15 +71,15 @@ pip install .
 
 ## Using the Python package
 
-The 2D version of the library can be imported as follows:
+The ViennaCS Python package can be used by importing it in your Python scripts:
 ```python
-import viennacs2d as vcs
+import viennacs as vcs
 ```
 
-In order to switch to three dimensions, only the import needs to be changed:
-
+By default, ViennaCS operates in two dimensions. You can set the dimension using:
 ```python
-import viennacs3d as vcs
+vcs.setDimension(2)  # For 2D simulations
+vcs.setDimension(3)  # For 3D simulations
 ```
 
 ## Integration in CMake projects
@@ -90,7 +88,7 @@ We recommend using [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake) to consum
 
 * Installation with CPM
   ```cmake
-  CPMAddPackage("gh:viennatools/viennacs@1.1.0")
+  CPMAddPackage("gh:viennatools/viennacs@2.0.0")
   ```
 
 * With a local installation
@@ -151,4 +149,4 @@ http://www.iue.tuwien.ac.at/
 
 ## License
 
-See file [LICENSE](LICENSE) in the base directory.
+Versions < 2.0.0 were released under MIT License. Starting with version 2.0.0, the project is licensed under GPL-3.0 License. For more details, please refer to the [LICENSE](./LICENSE) file in the base directory of the repository.
