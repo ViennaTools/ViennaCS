@@ -8,7 +8,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
                  "particle scattering and ion implantation.";
 
   // set version string of python module
-  module.attr("__version__") = VIENNACS_MODULE_VERSION;
+  module.attr("__version__") = versionString();
+  module.attr("version") = versionString();
 
   // wrap omp_set_num_threads to control number of threads
   module.def("setNumThreads", &omp_set_num_threads);

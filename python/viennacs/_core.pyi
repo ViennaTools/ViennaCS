@@ -5,7 +5,8 @@ from __future__ import annotations
 import typing
 from viennacs import d2
 from viennacs import d3
-__all__: list[str] = ['d2', 'd3', 'setNumThreads']
+__all__: list[str] = ['d2', 'd3', 'setNumThreads', 'version']
 def setNumThreads(arg0: typing.SupportsInt | typing.SupportsIndex) -> None:
     ...
-__version__: str = 'VIENNACS_VERSION'
+__version__: str = '2.0.1'
+version: str = '2.0.1'

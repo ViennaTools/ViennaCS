@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 project(
   ViennaCS
   LANGUAGES CXX
-  VERSION 2.0.0)
+  VERSION 2.0.1)
 
 # --------------------------------------------------------------------------------------------------------
 # Library options
@@ -24,7 +24,6 @@ list(APPEND CMAKE_PREFIX_PATH ${VIENNACS_LOOKUP_DIRS})
 # --------------------------------------------------------------------------------------------------------
 
 add_library(${PROJECT_NAME} INTERFACE)
-add_library(ViennaTools::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
 set_target_properties(
@@ -43,6 +42,10 @@ endif()
 # Include directories
 # --------------------------------------------------------------------------------------------------------
 
+# Generate version header
+configure_file("${PROJECT_SOURCE_DIR}/cmake/csVersion.hpp.in"
+               "${PROJECT_SOURCE_DIR}/include/viennacs/csVersion.hpp" @ONLY)
+
 target_include_directories(
   ${PROJECT_NAME} INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include/viennacs>
                             $<INSTALL_INTERFACE:include/viennacs-${PROJECT_VERSION}>)
@@ -55,7 +58,7 @@ include("cmake/cpm.cmake")
 
 CPMAddPackage(
   NAME ViennaCore
-  VERSION 2.0.0
+  VERSION 2.1.1
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaCore")
 
 CPMAddPackage(
@@ -72,12 +75,11 @@ CPMFindPackage(
 
 CPMFindPackage(
   NAME ViennaLS
-  VERSION 5.6.0
+  VERSION 5.7.0
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaLS"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 
-target_link_libraries(${PROJECT_NAME} INTERFACE ViennaTools::ViennaCore ViennaTools::ViennaLS
-                                                ViennaTools::ViennaRay)
+target_link_libraries(${PROJECT_NAME} INTERFACE ViennaCore ViennaLS ViennaRay)
 
 # --------------------------------------------------------------------------------------------------------
 # Setup Examples

@@ -27,6 +27,7 @@
 #include <csDenseCellSet.hpp>
 #include <csMeanFreePath.hpp>
 #include <csSegmentCells.hpp>
+#include <csVersion.hpp>
 
 using namespace viennacs;
 

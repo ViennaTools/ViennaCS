@@ -19,7 +19,7 @@ from viennacs.d2 import SegmentCells
 from . import _core
 from . import d2
 from . import d3
-__all__: list[str] = ['AtomicLayerProcess', 'DenseCellSet', 'MeanFreePath', 'PROXY_DIM', 'Precursor', 'SegmentCells', 'd2', 'd3', 'getDimension', 'setDimension', 'setNumThreads']
+__all__: list[str] = ['AtomicLayerProcess', 'DenseCellSet', 'MeanFreePath', 'PROXY_DIM', 'Precursor', 'SegmentCells', 'd2', 'd3', 'getDimension', 'setDimension', 'setNumThreads', 'version']
 def __dir__():
     ...
 def __getattr__(name):
@@ -47,5 +47,6 @@ def setDimension(d: int):
         
     """
 PROXY_DIM: int = 2
-__version__: str = 'VIENNACS_VERSION'
+__version__: str = '2.0.1'
+version: str = '2.0.1'
 _C = _core
