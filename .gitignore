@@ -7,6 +7,7 @@ __pycache__/
 .idea/
 cmake-build-*
 __pycache__
+ImplData/
 
 # Prerequisites
 *.d
