@@ -4,8 +4,10 @@
 #include "csImplantModel.hpp"
 #include <csDenseCellSet.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
+#include <unordered_set>
 #include <vcLogger.hpp>
 
 namespace viennacs {
@@ -53,6 +55,8 @@ public:
     auto boundingBox = cellSet_->getBoundingBox();
     auto gridDelta = cellSet_->getGridDelta();
     auto concentration = cellSet_->getScalarData("concentration");
+    if (!concentration)
+      concentration = cellSet_->addScalarData("concentration", 0.);
     auto material = cellSet_->getScalarData("Material");
 
     NumericType xLength = std::abs(boundingBox[1][0] - boundingBox[0][0]);
@@ -62,6 +66,15 @@ public:
     int numberOfcellsXdirection = xLength / gridDelta;
     int numberOfcellsYdirection = yLength / gridDelta;
     int numberOfcellsZdirection = zLength / gridDelta;
+
+    const auto relevant_Cells =
+        std::max(1, static_cast<int>(std::ceil(model_->getMaxDepth() /
+                                               std::max(gridDelta, NumericType(1e-9)))));
+    const auto relevant_lateral_Cells =
+        std::max(1, static_cast<int>(std::ceil(model_->getMaxLateralRange() /
+                                               std::max(gridDelta, NumericType(1e-9)))));
+    const std::unordered_set<int> maskMaterialSet(maskMaterials.begin(),
+                                                  maskMaterials.end());
 
     double radians = angle_ * M_PI / 180;
 
@@ -76,7 +89,7 @@ public:
                                                    initialZ};
           int initialIndex;
           numberOfcellsZdirection = zLength / gridDelta;
-          do {
+          while (true) {
             initialCoords[0] = initialX;
             initialCoords[1] = initialY;
             initialCoords[2] = initialZ;
@@ -88,14 +101,18 @@ public:
               if (std::abs(initialCoords[2]) > zLength) {
                 break;
               }
+              continue;
             } else {
-              if ((*material)[initialIndex] == 0.) {
-                break;
+              const auto materialId = static_cast<int>((*material)[initialIndex]);
+              if (materialId == 0 || maskMaterialSet.count(materialId) > 0) {
+                initialZ -= gridDelta * std::cos(radians);
+                initialX -= gridDelta * std::sin(radians);
+                numberOfcellsZdirection -= 1;
+                if (std::abs(initialCoords[2]) > zLength) {
+                  break;
+                }
+                continue;
               }
-              NumericType sigma = 1;         // params.get("sigma");
-              NumericType lateral_sigma = 1; // params.get("lateral_sigma");
-              int relevant_lateral_Cells = 3 * lateral_sigma / gridDelta;
-              int relevant_Cells = 3 * sigma / gridDelta;
               // iterate over all the cells in y [z] direction (depth), and
               // then iterate over all the cells in x [&y] direction to get
               // the lateral displacement
@@ -132,8 +149,9 @@ public:
                   }
                 }
               }
+              break;
             }
-          } while (initialIndex == -1);
+          }
         }
       }
     } else {
@@ -144,7 +162,7 @@ public:
         std::array<NumericType, 3> initialCoords{initialX, initialY, 0};
         int initialIndex;
         numberOfcellsYdirection = yLength / gridDelta;
-        do {
+        while (true) {
           initialCoords[0] = initialX;
           initialCoords[1] = initialY;
           initialIndex = cellSet_->getIndex(initialCoords);
@@ -155,40 +173,50 @@ public:
             if (std::abs(initialCoords[1]) > yLength) {
               break;
             }
+            continue;
           } else {
-            if ((*material)[initialIndex] == 0.) {
-              break;
-            } else {
-              // iterate over all the cells in y direction (depth), and then
-              // iterate over all the cells in x direction to get the lateral
-              // displacement
-              for (int j = 0; j < numberOfcellsYdirection + 2; j++) {
-                for (int k = 0; k < numberOfcellsXdirection + 1; k++) {
-                  NumericType yCord = j * gridDelta;
-                  NumericType xCord = k * gridDelta;
-                  NumericType shifted_xCord = xCord - xLength / 2;
-                  NumericType shifted_yCord = initialY - yCord;
-                  // std::cout << "coord: [" << shifted_xCord << ", " <<
-                  // shifted_yCord << "]" <<std::endl;
-                  NumericType depth =
-                      std::cos(radians) * yCord +
-                      std::sin(radians) * (initialX - shifted_xCord);
-                  NumericType lateralDisplacement =
-                      std::abs(std::cos(radians) * (initialX - shifted_xCord) -
-                               std::sin(radians) * yCord);
-                  std::array<NumericType, 3> coords{shifted_xCord,
-                                                    shifted_yCord, 0};
-                  auto index = cellSet_->getIndex(coords);
-                  if (index != -1) {
-                    (*concentration)[index] +=
-                        model_->getDepthProfile(depth) *
-                        model_->getLateralProfile(lateralDisplacement, depth);
-                  }
+            const auto materialId = static_cast<int>((*material)[initialIndex]);
+            if (materialId == 0 || maskMaterialSet.count(materialId) > 0) {
+              initialY -= gridDelta * std::cos(radians);
+              initialX -= gridDelta * std::sin(radians);
+              numberOfcellsYdirection -= 1;
+              if (std::abs(initialCoords[1]) > yLength) {
+                break;
+              }
+              continue;
+            }
+
+            // iterate over all the cells in y direction (depth), and then
+            // iterate over all the cells in x direction to get the lateral
+            // displacement
+            for (int j = 0; j < relevant_Cells + 1; j++) {
+              for (int k = 0; k < relevant_lateral_Cells + 1; k++) {
+                NumericType yCord = j * gridDelta;
+                NumericType xCord = initialX + k * gridDelta;
+                NumericType shifted_xCord =
+                    xCord - (relevant_lateral_Cells * gridDelta) / 2;
+                NumericType shifted_yCord = initialY - yCord;
+                // std::cout << "coord: [" << shifted_xCord << ", " <<
+                // shifted_yCord << "]" <<std::endl;
+                NumericType depth =
+                    std::cos(radians) * yCord +
+                    std::sin(radians) * (initialX - shifted_xCord);
+                NumericType lateralDisplacement =
+                    std::abs(std::cos(radians) * (initialX - shifted_xCord) -
+                             std::sin(radians) * yCord);
+                std::array<NumericType, 3> coords{shifted_xCord, shifted_yCord,
+                                                  0};
+                auto index = cellSet_->getIndex(coords);
+                if (index != -1) {
+                  (*concentration)[index] +=
+                      model_->getDepthProfile(depth) *
+                      model_->getLateralProfile(lateralDisplacement, depth);
                 }
               }
             }
+            break;
           }
-        } while (initialIndex == -1);
+        }
       }
     }
   }

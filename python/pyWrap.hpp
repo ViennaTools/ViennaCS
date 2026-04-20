@@ -236,18 +236,12 @@ template <int D> void bindAPI(py::module &module) {
       .def("setPrintInterval", &AtomicLayerProcess<T, D>::setPrintInterval)
       .def("apply", &AtomicLayerProcess<T, D>::apply);
 
-  py::class_<constants::PearsonIVParameters<T>>(module, "PearsonIVParameters")
-      .def(py::init<>())
-      .def_readwrite("mu", &constants::PearsonIVParameters<T>::mu)
-      .def_readwrite("sigma", &constants::PearsonIVParameters<T>::sigma)
-      .def_readwrite("beta", &constants::PearsonIVParameters<T>::beta)
-      .def_readwrite("gamma", &constants::PearsonIVParameters<T>::gamma);
-
   py::class_<ImplantModel<T, D>, SmartPointer<ImplantModel<T, D>>>(
       module, "ImplantModel")
       .def("getDepthProfile", &ImplantModel<T, D>::getDepthProfile)
       .def("getLateralProfile", &ImplantModel<T, D>::getLateralProfile)
-      .def("getMaxDepth", &ImplantModel<T, D>::getMaxDepth);
+      .def("getMaxDepth", &ImplantModel<T, D>::getMaxDepth)
+      .def("getMaxLateralRange", &ImplantModel<T, D>::getMaxLateralRange);
 
   py::class_<ImplantGaussian<T, D>, ImplantModel<T, D>,
              SmartPointer<ImplantGaussian<T, D>>>(module, "ImplantGaussian")
@@ -259,6 +253,25 @@ template <int D> void bindAPI(py::module &module) {
                                                    "ImplantPearsonIV")
       .def(py::init<const constants::PearsonIVParameters<T> &, T, T>(),
            py::arg("params"), py::arg("lateralMu"),
+           py::arg("lateralSigma"));
+
+  py::class_<ImplantPearsonIVChanneling<T, D>, ImplantModel<T, D>,
+             SmartPointer<ImplantPearsonIVChanneling<T, D>>>(
+      module, "ImplantPearsonIVChanneling")
+      .def(py::init<const constants::PearsonIVParameters<T> &, T, T, T, T, T,
+                    T>(),
+           py::arg("params"), py::arg("lateralMu"),
+           py::arg("lateralSigma"), py::arg("tailFraction"),
+           py::arg("tailStartDepth"), py::arg("tailDecayLength"),
+           py::arg("tailBlendWidth") = T(0));
+
+  py::class_<ImplantDualPearsonIV<T, D>, ImplantModel<T, D>,
+             SmartPointer<ImplantDualPearsonIV<T, D>>>(
+      module, "ImplantDualPearsonIV")
+      .def(py::init<const constants::PearsonIVParameters<T> &,
+                    const constants::PearsonIVParameters<T> &, T, T, T>(),
+           py::arg("headParams"), py::arg("tailParams"),
+           py::arg("headFraction"), py::arg("lateralMu"),
            py::arg("lateralSigma"));
 
   py::class_<Implant<T, D>>(module, "Implant")

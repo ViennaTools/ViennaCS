@@ -2,6 +2,7 @@
 
 #include "../csImplantModel.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace viennacs {
@@ -24,6 +25,12 @@ public:
     // profile of empirical implant model in lateral directions
     return (1.0 / (lateralSigma_ * std::sqrt(2 * M_PI))) *
            std::exp(-0.5 * std::pow((offset - lateralMu_) / lateralSigma_, 2));
+  }
+
+  NumericType getMaxDepth() override { return std::max(mu_ + 6 * sigma_, mu_); }
+
+  NumericType getMaxLateralRange() override {
+    return std::abs(lateralMu_) + 6 * lateralSigma_;
   }
 
 private:

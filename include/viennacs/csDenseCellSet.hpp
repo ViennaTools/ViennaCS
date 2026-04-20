@@ -160,7 +160,7 @@ public:
           if (addVoxel) {
             int material = materialId;
             if (useMaterialMap)
-              material = indexToMaterial(materialId, materialMap);
+              material = indexToMaterial(materialId);
 
             if constexpr (D == 3) {
               // reorder elements for hexas to be ordered correctly

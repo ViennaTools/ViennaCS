@@ -21,6 +21,11 @@ public:
     // maximum depth of the implant
     return 0.;
   }
+
+  virtual NumericType getMaxLateralRange() {
+    // practical lateral cut-off of the implant kernel
+    return 0.;
+  }
 };
 
 } // namespace viennacs

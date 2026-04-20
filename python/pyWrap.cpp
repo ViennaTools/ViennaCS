@@ -14,6 +14,13 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
   // wrap omp_set_num_threads to control number of threads
   module.def("setNumThreads", &omp_set_num_threads);
 
+  py::class_<constants::PearsonIVParameters<T>>(module, "PearsonIVParameters")
+      .def(py::init<>())
+      .def_readwrite("mu", &constants::PearsonIVParameters<T>::mu)
+      .def_readwrite("sigma", &constants::PearsonIVParameters<T>::sigma)
+      .def_readwrite("beta", &constants::PearsonIVParameters<T>::beta)
+      .def_readwrite("gamma", &constants::PearsonIVParameters<T>::gamma);
+
   // Submodule for 2D
   auto m2 = module.def_submodule("d2", "2D bindings");
   m2.attr("__name__") = "viennacs.d2";
