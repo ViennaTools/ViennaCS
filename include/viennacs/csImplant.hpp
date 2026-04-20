@@ -25,6 +25,7 @@ template <class NumericType, int D> class Implant {
   SmartPointer<DenseCellSet<NumericType, D>> cellSet_;
   SmartPointer<ImplantModel<NumericType, D>> model_;
   std::vector<int> maskMaterials;
+  std::vector<int> screenMaterials;
   NumericType angle_ = NumericType(0);
   NumericType dosePerCm2_ = NumericType(0);
   NumericType lengthUnitInCm_ = NumericType(1e-7);
@@ -74,6 +75,10 @@ public:
     maskMaterials = {mats...};
   }
 
+  template <class... Mats> void setScreenMaterials(Mats... mats) {
+    screenMaterials = {mats...};
+  }
+
   void apply() {
     if (!model_) {
       Logger::getInstance()
@@ -113,16 +118,19 @@ public:
     int numberOfcellsYdirection = yLength / gridDelta;
     int numberOfcellsZdirection = zLength / gridDelta;
 
+    double radians = angle_ * M_PI / 180;
+
     const auto relevant_Cells =
         std::max(1, static_cast<int>(std::ceil(model_->getMaxDepth() /
                                                std::max(gridDelta, NumericType(1e-9)))));
     const auto relevant_lateral_Cells =
-        std::max(1, static_cast<int>(std::ceil(model_->getMaxLateralRange() /
-                                               std::max(gridDelta, NumericType(1e-9)))));
+        std::max(1, static_cast<int>(std::ceil(2.0 * model_->getMaxLateralRange() /
+                                               (std::max(static_cast<NumericType>(std::abs(std::cos(radians))), NumericType(0.01)) * std::max(gridDelta, NumericType(1e-9))))));
     const std::unordered_set<int> maskMaterialSet(maskMaterials.begin(),
                                                   maskMaterials.end());
+    const std::unordered_set<int> screenMaterialSet(screenMaterials.begin(),
+                                                    screenMaterials.end());
 
-    double radians = angle_ * M_PI / 180;
     NumericType doseWeight = NumericType(1);
     if (doseControl_ != ImplantDoseControl::Off && dosePerCm2_ > NumericType(0)) {
       auto effectiveDosePerCm2 = dosePerCm2_;
@@ -139,7 +147,9 @@ public:
 
     if constexpr (D == 3) {
       // iterate over all the beams that hit the xy-plane from the z direction:
-      for (int i = 0; i < numberOfcellsXdirection; i++) {
+      int paddingCellsX = std::ceil(zLength * std::abs(std::tan(radians)) / gridDelta) + 5;
+      NumericType padX = paddingCellsX * gridDelta + xLength;
+      for (int i = -paddingCellsX; i < numberOfcellsXdirection + paddingCellsX; i++) {
         for (int h = 0; h < numberOfcellsYdirection; h++) {
           NumericType initialX = minX + i * gridDelta + gridDelta;
           NumericType initialY = minY + h * gridDelta + gridDelta;
@@ -157,8 +167,8 @@ public:
               initialZ -= gridDelta * std::cos(radians);
               initialX -= gridDelta * std::sin(radians);
               numberOfcellsZdirection -= 1;
-              if (initialZ < minZ - gridDelta || initialX < minX - xLength ||
-                  initialX > maxX + xLength) {
+              if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
                 break;
               }
               continue;
@@ -168,8 +178,8 @@ public:
                 initialZ -= gridDelta * std::cos(radians);
                 initialX -= gridDelta * std::sin(radians);
                 numberOfcellsZdirection -= 1;
-                if (initialZ < minZ - gridDelta || initialX < minX - xLength ||
-                    initialX > maxX + xLength) {
+                if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                    initialX > maxX + padX) {
                   break;
                 }
                 continue;
@@ -177,14 +187,26 @@ public:
               if (maskMaterialSet.count(materialId) > 0) {
                 break;
               }
+              if (screenMaterialSet.count(materialId) > 0) {
+                initialZ -= gridDelta * std::cos(radians);
+                initialX -= gridDelta * std::sin(radians);
+                numberOfcellsZdirection -= 1;
+                if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                    initialX > maxX + padX) {
+                  break;
+                }
+                continue;
+              }
               // iterate over all the cells in y [z] direction (depth), and
               // then iterate over all the cells in x [&y] direction to get
               // the lateral displacement
-              for (int j = 0; j < relevant_Cells + 1; j++) {
+              int paddingZ = std::ceil(model_->getMaxLateralRange() * std::abs(std::sin(radians)) / gridDelta);
+              for (int j = -paddingZ; j < relevant_Cells + paddingZ + 1; j++) {
+                NumericType zCord = j * gridDelta;
+                int shiftK = std::round((zCord * std::tan(radians)) / gridDelta);
                 for (int k = 0; k < relevant_lateral_Cells + 1; k++) {
+                  NumericType xCord = initialX + (k - shiftK) * gridDelta;
                   for (int l = 0; l < relevant_lateral_Cells + 1; l++) {
-                    NumericType zCord = j * gridDelta;
-                    NumericType xCord = initialX + k * gridDelta;
                     NumericType yCord = initialY + l * gridDelta;
                     NumericType shifted_xCord =
                         xCord - (relevant_lateral_Cells * gridDelta) / 2;
@@ -194,8 +216,7 @@ public:
                     // std::cout << "coord: [" << shifted_xCord << ", " <<
                     // shifted_yCord << "]" <<std::endl;
                     NumericType depth =
-                        std::cos(radians) * zCord +
-                        std::sin(radians) * (initialX - shifted_xCord);
+                        zCord / std::max(static_cast<NumericType>(std::abs(std::cos(radians))), NumericType(0.01));
                     NumericType lateralDisplacement =
                         std::sqrt(std::pow((std::cos(radians) *
                                                 (initialX - shifted_xCord) -
@@ -211,7 +232,9 @@ public:
                       (*concentration)[index] +=
                           contribution;
                       if (beamHits != nullptr && contribution > NumericType(0)) {
-                        (*beamHits)[index] = NumericType(1);
+                    if (lateralDisplacement <= gridDelta) {
+                      (*beamHits)[index] = NumericType(1);
+                    }
                       }
                     }
                   }
@@ -224,22 +247,25 @@ public:
       }
     } else {
       // iterate over all the beams that hit the x-plane from the y direction:
-      for (int i = 0; i < numberOfcellsXdirection; i++) {
+      int paddingCellsX = std::ceil(yLength * std::abs(std::tan(radians)) / gridDelta) + 5;
+      NumericType padX = paddingCellsX * gridDelta + xLength;
+      for (int i = -paddingCellsX; i < numberOfcellsXdirection + paddingCellsX; i++) {
         NumericType initialX = minX + i * gridDelta + gridDelta;
         NumericType initialY = maxY - gridDelta;
         std::array<NumericType, 3> initialCoords{initialX, initialY, 0};
         int initialIndex;
         numberOfcellsYdirection = yLength / gridDelta;
         while (true) {
-          initialCoords[0] = initialX;
+          // Clamp lateral coordinate for boundary lookups to simulate infinite extension
+          initialCoords[0] = std::max(minX + gridDelta / 2, std::min(initialX, maxX - gridDelta / 2));
           initialCoords[1] = initialY;
           initialIndex = cellSet_->getIndex(initialCoords);
           if (initialIndex == -1) {
             initialY -= gridDelta * std::cos(radians);
-            initialX -= gridDelta * std::sin(radians);
+            initialX += gridDelta * std::sin(radians);
             numberOfcellsYdirection -= 1;
-            if (initialY < minY - gridDelta || initialX < minX - xLength ||
-                initialX > maxX + xLength) {
+            if (initialY < minY - gridDelta || initialX < minX - padX ||
+                initialX > maxX + padX) {
               break;
             }
             continue;
@@ -247,10 +273,10 @@ public:
             const auto materialId = static_cast<int>((*material)[initialIndex]);
             if (materialId == 0) {
               initialY -= gridDelta * std::cos(radians);
-              initialX -= gridDelta * std::sin(radians);
+              initialX += gridDelta * std::sin(radians);
               numberOfcellsYdirection -= 1;
-              if (initialY < minY - gridDelta || initialX < minX - xLength ||
-                  initialX > maxX + xLength) {
+              if (initialY < minY - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
                 break;
               }
               continue;
@@ -258,24 +284,35 @@ public:
             if (maskMaterialSet.count(materialId) > 0) {
               break;
             }
+            if (screenMaterialSet.count(materialId) > 0) {
+              initialY -= gridDelta * std::cos(radians);
+              initialX += gridDelta * std::sin(radians);
+              numberOfcellsYdirection -= 1;
+              if (initialY < minY - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
+                break;
+              }
+              continue;
+            }
 
             // iterate over all the cells in y direction (depth), and then
             // iterate over all the cells in x direction to get the lateral
             // displacement
-            for (int j = 0; j < relevant_Cells + 1; j++) {
+            int paddingY = std::ceil(model_->getMaxLateralRange() * std::abs(std::sin(radians)) / gridDelta);
+            for (int j = -paddingY; j < relevant_Cells + paddingY + 1; j++) {
+              NumericType yCord = j * gridDelta;
+              int shiftK = std::round((yCord * std::tan(radians)) / gridDelta);
               for (int k = 0; k < relevant_lateral_Cells + 1; k++) {
-                NumericType yCord = j * gridDelta;
-                NumericType xCord = initialX + k * gridDelta;
+                NumericType xCord = initialX + (k + shiftK) * gridDelta;
                 NumericType shifted_xCord =
                     xCord - (relevant_lateral_Cells * gridDelta) / 2;
                 NumericType shifted_yCord = initialY - yCord;
                 // std::cout << "coord: [" << shifted_xCord << ", " <<
                 // shifted_yCord << "]" <<std::endl;
                 NumericType depth =
-                    std::cos(radians) * yCord +
-                    std::sin(radians) * (initialX - shifted_xCord);
+                    yCord / std::max(static_cast<NumericType>(std::abs(std::cos(radians))), NumericType(0.01));
                 NumericType lateralDisplacement =
-                    std::abs(std::cos(radians) * (initialX - shifted_xCord) -
+                    std::abs(std::cos(radians) * (shifted_xCord - initialX) -
                              std::sin(radians) * yCord);
                 std::array<NumericType, 3> coords{shifted_xCord, shifted_yCord,
                                                   0};
@@ -286,7 +323,9 @@ public:
                   (*concentration)[index] +=
                       contribution;
                   if (beamHits != nullptr && contribution > NumericType(0)) {
-                    (*beamHits)[index] = NumericType(1);
+                    if (lateralDisplacement <= gridDelta) {
+                      (*beamHits)[index] = NumericType(1);
+                    }
                   }
                 }
               }

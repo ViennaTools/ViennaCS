@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -25,6 +27,7 @@ template <typename NumericType> struct ImplantTableEntry {
   NumericType energyKeV = 0;
   NumericType tiltDeg = 0;
   NumericType rotationDeg = 0;
+  NumericType dosePerCm2 = 0;
   NumericType screenThickness = 0;
 
   NumericType headFraction = 1;
@@ -71,6 +74,7 @@ template <typename NumericType> struct ImplantRecipe {
   NumericType energyKeV = 0;
   NumericType tiltDeg = 0;
   NumericType rotationDeg = 0;
+  NumericType dosePerCm2 = 0;
   NumericType screenThickness = 0;
   NumericType damageLevel = 0;
 
@@ -128,6 +132,75 @@ inline std::string lower(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
                  [](unsigned char c) { return std::tolower(c); });
   return value;
+}
+
+inline bool isCommentLine(const std::string &line) {
+  const auto trimmed = trim(line);
+  return trimmed.empty() || trimmed[0] == '#' || trimmed[0] == '*' ||
+         trimmed.rfind("//", 0) == 0;
+}
+
+inline std::string nextDataLine(std::istream &stream) {
+  std::string line;
+  while (std::getline(stream, line)) {
+    line = trim(line);
+    if (!isCommentLine(line))
+      return line;
+  }
+  return "";
+}
+
+template <typename NumericType>
+inline std::vector<NumericType> parseNumericList(const std::string &line) {
+  std::stringstream stream(line);
+  std::vector<NumericType> values;
+  NumericType value = NumericType(0);
+  while (stream >> value)
+    values.push_back(value);
+  return values;
+}
+
+inline std::vector<std::string> splitWhitespace(const std::string &line) {
+  std::stringstream stream(line);
+  std::vector<std::string> values;
+  std::string value;
+  while (stream >> value)
+    values.push_back(value);
+  return values;
+}
+
+inline std::string canonicalSpeciesName(const std::string &value) {
+  const auto lowered = lower(value);
+  if (lowered == "b")
+    return "boron";
+  if (lowered == "bf2")
+    return "bf2";
+  if (lowered == "p")
+    return "phosphorus";
+  if (lowered == "as")
+    return "arsenic";
+  if (lowered == "sb")
+    return "antimony";
+  if (lowered == "in")
+    return "indium";
+  if (lowered == "ge")
+    return "germanium";
+  if (lowered == "si")
+    return "silicon";
+  return lowered;
+}
+
+inline std::string canonicalMaterialName(const std::string &value) {
+  const auto lowered = lower(value);
+  if (lowered == "si")
+    return "silicon";
+  if (lowered == "sio2" || lowered == "oxide")
+    return "oxide";
+  if (lowered == "si3n4" || lowered == "nitride")
+    return "nitride";
+  if (lowered == "poly" || lowered == "polysilicon")
+    return "polysilicon";
+  return lowered;
 }
 
 template <typename NumericType>
@@ -278,6 +351,7 @@ entryFromRecipe(const ImplantRecipe<NumericType> &recipe) {
   entry.energyKeV = recipe.energyKeV;
   entry.tiltDeg = recipe.tiltDeg;
   entry.rotationDeg = recipe.rotationDeg;
+  entry.dosePerCm2 = recipe.dosePerCm2;
   entry.screenThickness = recipe.screenThickness;
   if (entry.modelType.empty() || entry.modelType == "auto") {
     entry.modelType =
@@ -312,6 +386,22 @@ public:
   explicit ImplantTable(const std::string &fileName) { load(fileName); }
 
   void load(const std::string &fileName) {
+    entries_.clear();
+    const auto lowered = impl::lower(fileName);
+    if (lowered.size() >= 3 &&
+        lowered.substr(lowered.size() - 3) == ".s3") {
+      loadS3(fileName);
+      return;
+    }
+    if (lowered.size() >= 4 &&
+        lowered.substr(lowered.size() - 4) == ".csv") {
+      loadCSV(fileName);
+      return;
+    }
+    loadTaurus(fileName);
+  }
+
+  void loadCSV(const std::string &fileName) {
     entries_.clear();
 
     std::ifstream file(fileName);
@@ -355,6 +445,8 @@ public:
           impl::parseNumeric<NumericType>(headerIndex, cells, "tiltDeg");
       entry.rotationDeg =
           impl::parseNumeric<NumericType>(headerIndex, cells, "rotationDeg");
+      entry.dosePerCm2 =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "dosePerCm2");
       entry.screenThickness =
           impl::parseNumeric<NumericType>(headerIndex, cells, "screenThickness");
       entry.headFraction = impl::parseNumeric<NumericType>(
@@ -436,6 +528,244 @@ public:
     }
   }
 
+  void loadS3(const std::string &fileName) {
+    entries_.clear();
+
+    std::ifstream file(fileName);
+    if (!file.is_open()) {
+      throw std::runtime_error("Could not open implant table file: " + fileName);
+    }
+
+    const auto energiesLine = impl::nextDataLine(file);
+    const auto tiltsLine = impl::nextDataLine(file);
+    const auto rotationsLine = impl::nextDataLine(file);
+    const auto dosesLine = impl::nextDataLine(file);
+    const auto thicknessLine = impl::nextDataLine(file);
+
+    const auto energies = impl::parseNumericList<NumericType>(energiesLine);
+    const auto tilts = impl::parseNumericList<NumericType>(tiltsLine);
+    const auto rotations = impl::parseNumericList<NumericType>(rotationsLine);
+    const auto doses = impl::parseNumericList<NumericType>(dosesLine);
+    const auto thicknesses =
+        impl::parseNumericList<NumericType>(thicknessLine);
+
+    auto stripCount = [](std::vector<NumericType> values) {
+      if (!values.empty())
+        values.erase(values.begin());
+      return values;
+    };
+
+    const auto energyValues = stripCount(energies);
+    const auto tiltValues = stripCount(tilts);
+    const auto rotationValues = stripCount(rotations);
+    const auto doseValues = stripCount(doses);
+    const auto thicknessValues = stripCount(thicknesses);
+
+    if (energyValues.empty() || tiltValues.empty() || rotationValues.empty() ||
+        doseValues.empty() || thicknessValues.empty()) {
+      throw std::runtime_error("Invalid or incomplete S3 header in " + fileName);
+    }
+
+    struct PrimaryBlock {
+      NumericType headMu = 0;
+      NumericType headSigma = 0;
+      NumericType headGamma = 0;
+      NumericType headBeta = 0;
+      NumericType tailMu = 0;
+      NumericType tailSigma = 0;
+      NumericType tailGamma = 0;
+      NumericType tailBeta = 0;
+      NumericType headFraction = 1;
+    };
+
+    std::vector<PrimaryBlock> primaryBlocks;
+    const size_t comboCount = thicknessValues.size() * energyValues.size() *
+                              tiltValues.size() * rotationValues.size();
+    primaryBlocks.reserve(comboCount * doseValues.size());
+
+    for (size_t thicknessIdx = 0; thicknessIdx < thicknessValues.size();
+         ++thicknessIdx) {
+      for (size_t energyIdx = 0; energyIdx < energyValues.size(); ++energyIdx) {
+        for (size_t tiltIdx = 0; tiltIdx < tiltValues.size(); ++tiltIdx) {
+          for (size_t rotationIdx = 0; rotationIdx < rotationValues.size();
+               ++rotationIdx) {
+            for (size_t doseIdx = 0; doseIdx < doseValues.size(); ++doseIdx) {
+              const auto line = impl::nextDataLine(file);
+              const auto values = impl::parseNumericList<NumericType>(line);
+              if (values.size() < 9) {
+                throw std::runtime_error("Invalid S3 primary entry in " +
+                                         fileName);
+              }
+              PrimaryBlock block;
+              block.headMu = values[0];
+              block.headSigma = values[1];
+              block.headGamma = values[2];
+              block.headBeta = values[3];
+              block.tailMu = values[4];
+              block.tailSigma = values[5];
+              block.tailGamma = values[6];
+              block.tailBeta = values[7];
+              block.headFraction = values[8];
+              primaryBlocks.push_back(block);
+            }
+          }
+        }
+      }
+    }
+
+    size_t primaryIndex = 0;
+    for (size_t thicknessIdx = 0; thicknessIdx < thicknessValues.size();
+         ++thicknessIdx) {
+      for (size_t energyIdx = 0; energyIdx < energyValues.size(); ++energyIdx) {
+        for (size_t tiltIdx = 0; tiltIdx < tiltValues.size(); ++tiltIdx) {
+          for (size_t rotationIdx = 0; rotationIdx < rotationValues.size();
+               ++rotationIdx) {
+            const auto lateralLine = impl::nextDataLine(file);
+            const auto lateralValues =
+                impl::parseNumericList<NumericType>(lateralLine);
+            if (lateralValues.size() < 5) {
+              throw std::runtime_error("Invalid S3 lateral entry in " +
+                                       fileName);
+            }
+
+            for (size_t doseIdx = 0; doseIdx < doseValues.size(); ++doseIdx) {
+              const auto &primary = primaryBlocks.at(primaryIndex++);
+              ImplantTableEntry<NumericType> entry;
+              entry.modelType = "DualPearsonIV";
+              entry.substrateType = "crystalline";
+              entry.energyKeV = energyValues[energyIdx];
+              entry.tiltDeg = tiltValues[tiltIdx];
+              entry.rotationDeg = rotationValues[rotationIdx];
+              entry.dosePerCm2 = doseValues[doseIdx];
+              entry.screenThickness = thicknessValues[thicknessIdx] * NumericType(1e3);
+              entry.headFraction = primary.headFraction;
+              entry.headParams.mu = primary.headMu * NumericType(1e3);
+              entry.headParams.sigma = primary.headSigma * NumericType(1e3);
+              entry.headParams.gamma = primary.headGamma;
+              entry.headParams.beta = primary.headBeta;
+              entry.tailParams.mu = primary.tailMu * NumericType(1e3);
+              entry.tailParams.sigma = primary.tailSigma * NumericType(1e3);
+              entry.tailParams.gamma = primary.tailGamma;
+              entry.tailParams.beta = primary.tailBeta;
+
+              entry.headLateralModel = "s3";
+              entry.tailLateralModel = "s3";
+              entry.headLateralSigma = lateralValues[1] * NumericType(1e3);
+              entry.headLateralLv = lateralValues[2];
+              entry.tailLateralSigma = lateralValues[3] * NumericType(1e3);
+              entry.tailLateralLv = lateralValues[4];
+              entries_.push_back(entry);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  void loadTaurus(const std::string &fileName) {
+    entries_.clear();
+
+    std::ifstream file(fileName);
+    if (!file.is_open()) {
+      throw std::runtime_error("Could not open implant table file: " + fileName);
+    }
+
+    const auto fileStem =
+        std::filesystem::path(fileName).filename().string();
+    std::string species;
+    std::string material;
+    if (const auto marker = fileStem.find("_in_"); marker != std::string::npos) {
+      species = impl::canonicalSpeciesName(fileStem.substr(0, marker));
+      auto suffix = fileStem.substr(marker + 4);
+      if (const auto tail = suffix.rfind("_standard"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_tsuprem4"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_2012"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_2007"); tail != std::string::npos)
+        suffix.erase(tail);
+      material = impl::canonicalMaterialName(suffix);
+    }
+
+    std::vector<std::string> conditions;
+    std::string line;
+    while (std::getline(file, line)) {
+      line = impl::trim(line);
+      if (line.empty() || impl::isCommentLine(line))
+        continue;
+      const auto words = impl::splitWhitespace(line);
+      if (words.empty())
+        continue;
+      if (impl::lower(words.front()) == "energy") {
+        conditions = words;
+        break;
+      }
+    }
+
+    if (conditions.empty()) {
+      throw std::runtime_error("Could not find Taurus table header in " + fileName);
+    }
+
+    std::unordered_map<std::string, size_t> conditionIndex;
+    for (size_t i = 0; i < conditions.size(); ++i) {
+      conditionIndex[impl::lower(conditions[i])] = i;
+    }
+
+    constexpr size_t numMoments = 13;
+    while (std::getline(file, line)) {
+      line = impl::trim(line);
+      if (line.empty() || impl::isCommentLine(line))
+        continue;
+
+      const auto values = impl::parseNumericList<NumericType>(line);
+      if (values.size() < conditions.size() + numMoments)
+        continue;
+
+      ImplantTableEntry<NumericType> entry;
+      entry.species = species;
+      entry.material = material;
+      entry.substrateType = "crystalline";
+      entry.modelType = "DualPearsonIV";
+
+      const auto getCondition = [&](const std::string &name,
+                                    NumericType defaultValue = NumericType(0)) {
+        const auto it = conditionIndex.find(name);
+        if (it == conditionIndex.end() || it->second >= values.size())
+          return defaultValue;
+        return values[it->second];
+      };
+
+      entry.energyKeV = getCondition("energy");
+      entry.tiltDeg = getCondition("tilt");
+      entry.rotationDeg = getCondition("rotation");
+      entry.dosePerCm2 = getCondition("dose");
+      entry.screenThickness = getCondition("screen") * NumericType(1e3);
+
+      const size_t offset = conditions.size();
+      entry.headParams.mu = values[offset + 0] * NumericType(1e3);
+      entry.headParams.sigma = values[offset + 1] * NumericType(1e3);
+      entry.headLateralSigma = values[offset + 2] * NumericType(1e3);
+      entry.headLateralModel = "taurus";
+      entry.headLateralDeltaSigma = values[offset + 3];
+      entry.headParams.gamma = values[offset + 4];
+      entry.headParams.beta = values[offset + 5];
+      entry.tailParams.mu = values[offset + 6] * NumericType(1e3);
+      entry.tailParams.sigma = values[offset + 7] * NumericType(1e3);
+      entry.tailLateralSigma = values[offset + 8] * NumericType(1e3);
+      entry.tailLateralModel = "taurus";
+      entry.tailLateralDeltaSigma = values[offset + 9];
+      entry.tailParams.gamma = values[offset + 10];
+      entry.tailParams.beta = values[offset + 11];
+      entry.headFraction = values[offset + 12];
+      entries_.push_back(entry);
+    }
+
+    if (entries_.empty()) {
+      throw std::runtime_error("No Taurus implant entries found in " + fileName);
+    }
+  }
+
   const std::vector<ImplantTableEntry<NumericType>> &getEntries() const {
     return entries_;
   }
@@ -444,18 +774,21 @@ public:
   lookup(const std::string &species, const std::string &material,
          const std::string &substrateType, NumericType energyKeV,
          NumericType tiltDeg, NumericType rotationDeg,
+         NumericType dosePerCm2 = NumericType(0),
          NumericType screenThickness = NumericType(0),
          const std::string &preferredModel = "auto") const {
     std::vector<const ImplantTableEntry<NumericType> *> candidates;
-    const auto speciesLower = impl::lower(species);
-    const auto materialLower = impl::lower(material);
+    const auto speciesLower = impl::canonicalSpeciesName(species);
+    const auto materialLower = impl::canonicalMaterialName(material);
     const auto substrateLower = impl::lower(substrateType);
     const auto preferredLower = impl::lower(preferredModel);
 
     for (const auto &entry : entries_) {
-      if (impl::lower(entry.species) != speciesLower)
+      if (!entry.species.empty() &&
+          impl::canonicalSpeciesName(entry.species) != speciesLower)
         continue;
-      if (impl::lower(entry.material) != materialLower)
+      if (!entry.material.empty() &&
+          impl::canonicalMaterialName(entry.material) != materialLower)
         continue;
       if (impl::lower(entry.substrateType) != substrateLower)
         continue;
@@ -470,12 +803,70 @@ public:
                                " in " + material + " (" + substrateType + ").");
     }
 
+    auto restrictToLocalGrid =
+        [](std::vector<const ImplantTableEntry<NumericType> *> &entries,
+           NumericType target, auto accessor) {
+          constexpr NumericType eps = NumericType(1e-12);
+          if (entries.size() <= 1)
+            return;
+
+          bool hasExact = false;
+          NumericType lower = -std::numeric_limits<NumericType>::infinity();
+          NumericType upper = std::numeric_limits<NumericType>::infinity();
+          for (const auto *entry : entries) {
+            const auto value = accessor(*entry);
+            if (std::abs(value - target) <= eps) {
+              hasExact = true;
+              lower = target;
+              upper = target;
+              break;
+            }
+            if (value < target && value > lower)
+              lower = value;
+            if (value > target && value < upper)
+              upper = value;
+          }
+
+          std::vector<const ImplantTableEntry<NumericType> *> filtered;
+          filtered.reserve(entries.size());
+          for (const auto *entry : entries) {
+            const auto value = accessor(*entry);
+            if (hasExact) {
+              if (std::abs(value - target) <= eps)
+                filtered.push_back(entry);
+              continue;
+            }
+
+            const bool useLower =
+                std::isfinite(lower) && std::abs(value - lower) <= eps;
+            const bool useUpper =
+                std::isfinite(upper) && std::abs(value - upper) <= eps;
+            if (useLower || useUpper)
+              filtered.push_back(entry);
+          }
+
+          if (!filtered.empty())
+            entries = std::move(filtered);
+        };
+
+    restrictToLocalGrid(candidates, energyKeV,
+                        [](const auto &entry) { return entry.energyKeV; });
+    restrictToLocalGrid(candidates, tiltDeg,
+                        [](const auto &entry) { return entry.tiltDeg; });
+    restrictToLocalGrid(candidates, rotationDeg,
+                        [](const auto &entry) { return entry.rotationDeg; });
+    restrictToLocalGrid(candidates, dosePerCm2,
+                        [](const auto &entry) { return entry.dosePerCm2; });
+    restrictToLocalGrid(candidates, screenThickness,
+                        [](const auto &entry) { return entry.screenThickness; });
+
     if (candidates.size() == 1)
       return *candidates.front();
 
     NumericType totalWeight = 0;
     ImplantTableEntry<NumericType> result = *candidates.front();
     result.headFraction = 0;
+    result.dosePerCm2 = 0;
     result.screenThickness = 0;
     result.screenDecayLength = 0;
     result.damageDecay = 0;
@@ -511,6 +902,8 @@ public:
           impl::normalizedDistance(entry->tiltDeg, tiltDeg, NumericType(10)) +
           impl::normalizedDistance(entry->rotationDeg, rotationDeg,
                                    NumericType(45)) +
+          impl::normalizedDistance(entry->dosePerCm2, dosePerCm2,
+                                   std::max(dosePerCm2, NumericType(1e10))) +
           impl::normalizedDistance(entry->screenThickness, screenThickness,
                                    NumericType(10));
 
@@ -521,6 +914,7 @@ public:
       totalWeight += weight;
 
       result.headFraction += weight * entry->headFraction;
+      result.dosePerCm2 += weight * entry->dosePerCm2;
       result.screenThickness += weight * entry->screenThickness;
       result.screenDecayLength += weight * entry->screenDecayLength;
       result.damageDecay += weight * entry->damageDecay;
@@ -561,6 +955,7 @@ public:
       return *candidates.front();
 
     result.headFraction /= totalWeight;
+    result.dosePerCm2 /= totalWeight;
     result.screenThickness /= totalWeight;
     result.screenDecayLength /= totalWeight;
     result.damageDecay /= totalWeight;
@@ -608,14 +1003,14 @@ public:
                           const std::string &material,
                           const std::string &substrateType,
                           NumericType energyKeV, NumericType tiltDeg,
-                          NumericType rotationDeg,
+                          NumericType rotationDeg, NumericType dosePerCm2 = NumericType(0),
                           NumericType screenThickness = NumericType(0),
                           NumericType damageLevel = NumericType(0),
                           const std::string &preferredModel = "auto")
       : table_(fileName),
         selectedEntry_(impl::applyCrystallineReshaping(
             table_.lookup(species, material, substrateType, energyKeV, tiltDeg,
-                          rotationDeg, screenThickness, preferredModel),
+                          rotationDeg, dosePerCm2, screenThickness, preferredModel),
             tiltDeg, screenThickness, damageLevel)) {
     model_ = impl::buildModelFromEntry<NumericType, D>(selectedEntry_);
   }
@@ -667,6 +1062,7 @@ public:
       selectedEntry_ = table_.lookup(
           recipe.species, recipe.material, recipe.substrateType,
           recipe.energyKeV, recipe.tiltDeg, recipe.rotationDeg,
+          recipe.dosePerCm2,
           recipe.screenThickness, recipe.preferredModel);
     } else {
       selectedEntry_ = impl::entryFromRecipe(recipe);

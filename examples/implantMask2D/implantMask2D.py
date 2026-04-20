@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 try:
     import viennacs as _vcs
@@ -41,8 +42,19 @@ def read_config_file(file_name: str) -> dict:
     return params
 
 
-def make_bounds(x_extent: float, top_space: float, implant_depth: float, mask_height: float):
-    return [-0.5 * x_extent, 0.5 * x_extent, -implant_depth, top_space + mask_height]
+def make_bounds(
+    x_extent: float,
+    top_space: float,
+    implant_depth: float,
+    mask_height: float,
+    oxide_thickness: float,
+):
+    return [
+        -0.5 * x_extent,
+        0.5 * x_extent,
+        -implant_depth,
+        top_space + oxide_thickness + mask_height,
+    ]
 
 
 def make_domain(bounds, grid_delta: float):
@@ -77,9 +89,12 @@ def make_structure(
     implant_depth: float,
     opening_width: float,
     mask_height: float,
+    oxide_thickness: float,
     grid_delta: float,
 ):
-    bounds = make_bounds(x_extent, top_space, implant_depth, mask_height)
+    bounds = make_bounds(
+        x_extent, top_space, implant_depth, mask_height, oxide_thickness
+    )
     material_map = MaterialMap()
     level_sets = []
 
@@ -91,16 +106,21 @@ def make_structure(
     make_plane(substrate_top, 0.0)
     add_level_set(level_sets, material_map, substrate_top, 1)
 
+    if oxide_thickness > 0.0:
+        oxide = make_domain(bounds, grid_delta)
+        make_plane(oxide, oxide_thickness)
+        add_level_set(level_sets, material_map, oxide, 3)
+
     mask = make_domain(bounds, grid_delta)
-    make_plane(mask, mask_height)
+    make_plane(mask, oxide_thickness + mask_height)
 
     opening = make_domain(bounds, grid_delta)
     make_box(
         opening,
         -0.5 * opening_width,
-        -grid_delta,
+        oxide_thickness - grid_delta,
         0.5 * opening_width,
-        mask_height + grid_delta,
+        oxide_thickness + mask_height + grid_delta,
     )
     vls.BooleanOperation(mask, opening, BooleanOperationEnum.RELATIVE_COMPLEMENT).apply()
     add_level_set(level_sets, material_map, mask, 2)
@@ -123,6 +143,7 @@ def main() -> int:
         return 1
 
     params = read_config_file(sys.argv[1])
+    config_dir = Path(sys.argv[1]).resolve().parent
 
     grid_delta = params.get("gridDelta", 1.0)
     x_extent = params.get("xExtent", 40.0)
@@ -130,6 +151,7 @@ def main() -> int:
     implant_depth = params.get("implantDepth", 12.0)
     opening_width = params.get("openingWidth", 8.0)
     mask_height = params.get("maskHeight", 4.0)
+    oxide_thickness = params.get("oxideThickness", 0.0)
     angle = params.get("angle", 7.0)
     beam_spacing = params.get("beamSpacing", grid_delta)
     implant_dose_cm2 = params.get("doseCm2", 1.0e15)
@@ -158,6 +180,7 @@ def main() -> int:
         implant_depth,
         opening_width,
         mask_height,
+        oxide_thickness,
         grid_delta,
     )
     cell_set = build_cell_set(structure, top_space)
@@ -170,21 +193,22 @@ def main() -> int:
     recipe.energyKeV = energy_kev
     recipe.tiltDeg = angle
     recipe.rotationDeg = rotation_deg
+    recipe.dosePerCm2 = implant_dose_cm2
     recipe.screenThickness = screen_thickness
     recipe.damageLevel = damage_level
-    recipe.tableFileName = str(
-        params.get("tablePath", _vcs.getDefaultImplantTablePath())
-    )
+    table_file = params.get("tablePath", _vcs.getDefaultImplantTablePath())
+    table_file = Path(str(table_file))
+    if not table_file.is_absolute():
+        candidate = (config_dir / table_file).resolve()
+        if candidate.exists():
+            table_file = candidate
+    recipe.tableFileName = str(table_file)
     recipe.useTableLookup = "projectedRange" not in params
 
     if not recipe.useTableLookup:
         entry = recipe.entry
         entry.modelType = preferred_model
         entry.headFraction = params.get("headFraction", 0.97)
-        entry.screenDecayLength = params.get("screenDecayLength", 0.0)
-        entry.damageDecay = params.get("damageDecay", 0.0)
-        entry.tiltDecayDeg = params.get("tiltDecayDeg", 0.0)
-        entry.reshapeStrength = params.get("reshapeStrength", 1.0)
 
         entry.headParams.mu = params.get("projectedRange", 31.0)
         entry.headParams.sigma = params.get("depthSigma", 11.0)
@@ -192,15 +216,6 @@ def main() -> int:
         entry.headParams.beta = params.get("kurtosis", 6.2)
         entry.headLateralMu = params.get("lateralMu", 0.0)
         entry.headLateralSigma = params.get("lateralSigma", 5.0)
-        entry.headLateralModel = str(params.get("headLateralModel", params.get("lateralModel", "constant")))
-        entry.headLateralScale = params.get("headLateralScale", 1.0)
-        entry.headLateralLv = params.get("headLateralLv", 1.0)
-        entry.headLateralDeltaSigma = params.get("headLateralDeltaSigma", 0.0)
-        entry.headLateralP1 = params.get("headLateralP1", 0.0)
-        entry.headLateralP2 = params.get("headLateralP2", 0.0)
-        entry.headLateralP3 = params.get("headLateralP3", 0.0)
-        entry.headLateralP4 = params.get("headLateralP4", 0.0)
-        entry.headLateralP5 = params.get("headLateralP5", 0.0)
 
         entry.tailParams.mu = params.get("tailProjectedRange", 85.0)
         entry.tailParams.sigma = params.get("tailDepthSigma", 28.0)
@@ -208,17 +223,6 @@ def main() -> int:
         entry.tailParams.beta = params.get("tailKurtosis", 4.0)
         entry.tailLateralMu = params.get("tailLateralMu", entry.headLateralMu)
         entry.tailLateralSigma = params.get("tailLateralSigma", 6.0)
-        entry.tailLateralModel = str(params.get("tailLateralModel", entry.headLateralModel))
-        entry.tailLateralScale = params.get("tailLateralScale", entry.headLateralScale)
-        entry.tailLateralLv = params.get("tailLateralLv", entry.headLateralLv)
-        entry.tailLateralDeltaSigma = params.get(
-            "tailLateralDeltaSigma", entry.headLateralDeltaSigma
-        )
-        entry.tailLateralP1 = params.get("tailLateralP1", entry.headLateralP1)
-        entry.tailLateralP2 = params.get("tailLateralP2", entry.headLateralP2)
-        entry.tailLateralP3 = params.get("tailLateralP3", entry.headLateralP3)
-        entry.tailLateralP4 = params.get("tailLateralP4", entry.headLateralP4)
-        entry.tailLateralP5 = params.get("tailLateralP5", entry.headLateralP5)
 
     model = vcs.RecipeDrivenImplantModel(recipe)
     if recipe.useTableLookup:
@@ -246,6 +250,8 @@ def main() -> int:
     if hasattr(implant, "setOutputConcentrationInCm3"):
         implant.setOutputConcentrationInCm3(True)
     implant.setMaskMaterials([2])
+    if oxide_thickness > 0.0 and hasattr(implant, "setScreenMaterials"):
+        implant.setScreenMaterials([3])
     implant.apply()
 
     if abs(beam_spacing - grid_delta) > 1e-9:

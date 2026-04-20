@@ -1,13 +1,14 @@
 gridDelta=0.25
 xExtent=100.0
-topSpace=10.0
+topSpace=15.0
 implantDepth=100.0
 
 openingWidth=15.0
 maskHeight=10.0
+oxideThickness=2.0
 
 # Same target recipe as config.txt, but using top-level implant conditions only.
-# The example will look up the moments from data/implant/implant_moments.csv.
+# The example will look up the moments from a real Taurus implant table.
 species=B
 material=Si
 energyKeV=10.0
@@ -17,8 +18,9 @@ beamSpacing=0.25
 doseCm2=1.0e15
 doseControl=WaferDose
 substrateType=crystalline
-screenThickness=0.0
+screenThickness=2.0
 damageLevel=0.0
+tablePath=../../data/ImplData/Taurus/boron_in_silicon_standard
 
 # Keep the preferred lateral formulation explicit at the recipe level.
 # The actual calibrated values come from the implant table entry.

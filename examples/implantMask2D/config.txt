@@ -1,10 +1,11 @@
 gridDelta=0.25
 xExtent=100.0
-topSpace=10.0
+topSpace=15.0
 implantDepth=100.0
 
 openingWidth=15.0
 maskHeight=10.0
+oxideThickness=2.0
 
 # Example target: B, 10 keV, Si(100), 7 degree tilt
 species=B
@@ -16,7 +17,7 @@ beamSpacing=0.25
 doseCm2=1.0e15
 doseControl=WaferDose
 substrateType=crystalline
-screenThickness=0.0
+screenThickness=2.0
 damageLevel=0.0
 
 # If projectedRange/depthSigma/skewness/... are omitted, the example will try

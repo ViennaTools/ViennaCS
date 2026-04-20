@@ -32,17 +32,35 @@ NumericType PearsonIV(NumericType x,
     return NumericType(0);
 
   const NumericType discriminant = 4 * b_0 * b_2 - b_1 * b_1;
-  if (discriminant <= NumericType(0))
-    return NumericType(0);
-
   NumericType m = 1 / (2 * b_2);
+  const NumericType polynomial = b_0 + b_1 * x + b_2 * x * x;
+
+  if (discriminant <= NumericType(0)) {
+    // Pearson Type I/II: real roots give bounded support — use atanh in log-space
+    const NumericType sqrtNegDisc = std::sqrt(-discriminant);
+    if (sqrtNegDisc <= NumericType(1e-30))
+      return NumericType(0);
+    const NumericType arg = (2 * b_2 * x + b_1) / sqrtNegDisc;
+    if (std::abs(arg) >= NumericType(1))
+      return NumericType(0);
+    const NumericType absPolynomial = std::abs(polynomial);
+    if (absPolynomial <= NumericType(0))
+      return NumericType(0);
+    const NumericType logResult =
+        m * std::log(absPolynomial) +
+        (b_1 / b_2 + 2 * a) / sqrtNegDisc * std::atanh(arg);
+    if (!std::isfinite(logResult))
+      return NumericType(0);
+    return std::exp(logResult);
+  }
+
   const NumericType sqrtDisc = std::sqrt(discriminant);
-  const NumericType polynomial = std::abs(b_0 + b_1 * x + b_2 * x * x);
-  if (polynomial <= NumericType(0))
+  const NumericType absPolynomial = std::abs(polynomial);
+  if (absPolynomial <= NumericType(0))
     return NumericType(0);
 
   const NumericType result =
-      std::pow(polynomial, m) *
+      std::pow(absPolynomial, m) *
       std::exp((-(b_1 / b_2 + 2 * a) / sqrtDisc) *
                std::atan((2 * b_2 * x + b_1) / sqrtDisc));
 

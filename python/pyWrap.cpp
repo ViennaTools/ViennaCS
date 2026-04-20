@@ -67,6 +67,7 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def_readwrite("energyKeV", &tables::ImplantTableEntry<T>::energyKeV)
       .def_readwrite("tiltDeg", &tables::ImplantTableEntry<T>::tiltDeg)
       .def_readwrite("rotationDeg", &tables::ImplantTableEntry<T>::rotationDeg)
+      .def_readwrite("dosePerCm2", &tables::ImplantTableEntry<T>::dosePerCm2)
       .def_readwrite("screenThickness",
                      &tables::ImplantTableEntry<T>::screenThickness)
       .def_readwrite("headFraction",
@@ -135,6 +136,7 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def_readwrite("energyKeV", &tables::ImplantRecipe<T>::energyKeV)
       .def_readwrite("tiltDeg", &tables::ImplantRecipe<T>::tiltDeg)
       .def_readwrite("rotationDeg", &tables::ImplantRecipe<T>::rotationDeg)
+      .def_readwrite("dosePerCm2", &tables::ImplantRecipe<T>::dosePerCm2)
       .def_readwrite("screenThickness", &tables::ImplantRecipe<T>::screenThickness)
       .def_readwrite("damageLevel", &tables::ImplantRecipe<T>::damageLevel)
       .def_readwrite("entry", &tables::ImplantRecipe<T>::entry);
@@ -147,6 +149,7 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def("lookup", &tables::ImplantTable<T>::lookup, py::arg("species"),
            py::arg("material"), py::arg("substrateType"),
            py::arg("energyKeV"), py::arg("tiltDeg"), py::arg("rotationDeg"),
+           py::arg("dosePerCm2") = T(0),
            py::arg("screenThickness") = T(0),
            py::arg("preferredModel") = "auto");
 

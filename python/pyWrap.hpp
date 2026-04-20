@@ -291,10 +291,11 @@ template <int D> void bindAPI(py::module &module) {
              SmartPointer<tables::TableDrivenImplantModel<T, D>>>(
       module, "TableDrivenImplantModel")
       .def(py::init<const std::string &, const std::string &, const std::string &,
-                    const std::string &, T, T, T, T, T, const std::string &>(),
+                    const std::string &, T, T, T, T, T, T, const std::string &>(),
            py::arg("fileName"), py::arg("species"), py::arg("material"),
            py::arg("substrateType"), py::arg("energyKeV"),
            py::arg("tiltDeg"), py::arg("rotationDeg"),
+           py::arg("dosePerCm2") = T(0),
            py::arg("screenThickness") = T(0),
            py::arg("damageLevel") = T(0),
            py::arg("preferredModel") = "auto")
@@ -375,5 +376,55 @@ template <int D> void bindAPI(py::module &module) {
           },
           py::arg("materials"),
           "Set the material IDs to be treated as mask materials.")
+      .def(
+          "setScreenMaterials",
+          [](Implant<T, D> &implant, const std::vector<int> &materials) {
+            switch (materials.size()) {
+            case 0:
+              implant.setScreenMaterials();
+              break;
+            case 1:
+              implant.setScreenMaterials(materials[0]);
+              break;
+            case 2:
+              implant.setScreenMaterials(materials[0], materials[1]);
+              break;
+            case 3:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2]);
+              break;
+            case 4:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2], materials[3]);
+              break;
+            case 5:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2], materials[3],
+                                         materials[4]);
+              break;
+            case 6:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2], materials[3],
+                                         materials[4], materials[5]);
+              break;
+            case 7:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2], materials[3],
+                                         materials[4], materials[5],
+                                         materials[6]);
+              break;
+            case 8:
+              implant.setScreenMaterials(materials[0], materials[1],
+                                         materials[2], materials[3],
+                                         materials[4], materials[5],
+                                         materials[6], materials[7]);
+              break;
+            default:
+              throw std::runtime_error(
+                  "setScreenMaterials currently supports up to 8 materials.");
+            }
+          },
+          py::arg("materials"),
+          "Set the material IDs to be treated as screen/cap materials.")
       .def("apply", &Implant<T, D>::apply);
 }
