@@ -1,0 +1,10 @@
+# Starter ViennaCS implant moment table.
+# Values are representative heuristics intended to exercise the table-driven
+# infrastructure, not a full calibrated production implant library.
+species,material,substrateType,modelType,energyKeV,tiltDeg,rotationDeg,screenThickness,headFraction,screenDecayLength,damageDecay,tiltDecayDeg,reshapeStrength,headMu,headSigma,headBeta,headGamma,headLateralMu,headLateralSigma,headLateralModel,headLateralScale,headLateralLv,headLateralDeltaSigma,headLateralP1,headLateralP2,headLateralP3,headLateralP4,headLateralP5,tailMu,tailSigma,tailBeta,tailGamma,tailLateralMu,tailLateralSigma,tailLateralModel,tailLateralScale,tailLateralLv,tailLateralDeltaSigma,tailLateralP1,tailLateralP2,tailLateralP3,tailLateralP4,tailLateralP5
+B,Si,amorphous,PearsonIV,10,7,0,0,1.0,0,0,0,1.0,31.0,11.0,6.2,1.15,0.0,4.6,taurus,1.0,1.0,0.20,0,0,0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,constant,1.0,1.0,0.0,0,0,0,0,0
+B,Si,crystalline,DualPearsonIV,10,7,0,0,0.97,8.0,1.5,18.0,1.0,31.0,11.0,6.2,1.15,0.0,4.2,taurus,1.0,1.0,0.18,0,0,0,0,0,85.0,28.0,4.0,0.35,0.0,5.2,taurus,1.0,1.0,0.38,0,0,0,0,0
+B,Si,crystalline,DualPearsonIV,10,0,0,0,0.92,8.0,1.5,18.0,1.0,31.0,11.5,6.2,1.15,0.0,4.5,taurus,1.0,1.0,0.24,0,0,0,0,0,105.0,34.0,4.2,0.40,0.0,5.8,taurus,1.0,1.0,0.48,0,0,0,0,0
+P,Si,amorphous,PearsonIV,20,7,0,0,1.0,0,0,0,1.0,38.0,14.0,5.2,0.9,0.0,5.6,taurus,1.0,1.0,0.16,0,0,0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,constant,1.0,1.0,0.0,0,0,0,0,0
+P,Si,crystalline,DualPearsonIV,20,7,0,0,0.96,10.0,1.0,20.0,1.0,38.0,14.0,5.2,0.9,0.0,5.6,taurus,1.0,1.0,0.16,0,0,0,0,0,92.0,32.0,4.1,0.3,0.0,6.4,taurus,1.0,1.0,0.30,0,0,0,0,0
+As,Si,amorphous,PearsonIV,20,7,0,0,1.0,0,0,0,1.0,18.0,6.0,4.5,0.5,0.0,3.1,taurus,1.0,1.0,0.10,0,0,0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,constant,1.0,1.0,0.0,0,0,0,0,0

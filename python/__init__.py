@@ -63,6 +63,14 @@ def getDimension() -> int:
     return PROXY_DIM
 
 
+def getDefaultImplantTablePath() -> str:
+    import os
+
+    return os.path.join(
+        os.path.dirname(__file__), "data", "implant", "implant_moments.csv"
+    )
+
+
 def __getattr__(name):
     # 1) common/top-level from _core
     try:

@@ -17,6 +17,10 @@ public:
     return 0.;
   }
 
+  virtual NumericType getProfile(NumericType depth, NumericType offset) {
+    return getDepthProfile(depth) * getLateralProfile(offset, depth);
+  }
+
   virtual NumericType getMaxDepth() {
     // maximum depth of the implant
     return 0.;

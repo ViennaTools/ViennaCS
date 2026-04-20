@@ -1,4 +1,3 @@
-import math
 import sys
 
 try:
@@ -6,7 +5,6 @@ try:
 
     _vcs.setDimension(2)
     vcs = _vcs.d2
-    PearsonIVParameters = _vcs.PearsonIVParameters
     import viennals as _vls
 
     _vls.setDimension(2)
@@ -16,7 +14,6 @@ try:
     BooleanOperationEnum = _vls.BooleanOperationEnum
 except ImportError:
     import viennacs2d as vcs
-    PearsonIVParameters = vcs.PearsonIVParameters
     import viennals2d as vls
     MaterialMap = vls.MaterialMap
     BoundaryConditionEnum = vls.BoundaryConditionEnum
@@ -117,56 +114,7 @@ def build_cell_set(structure, top_space: float):
     cell_set.setCoverMaterial(0)
     level_sets, material_map = structure
     cell_set.fromLevelSets(level_sets, material_map, top_space)
-    cell_set.addScalarData("concentration", 0.0)
-    cell_set.addScalarData("beamHits", 0.0)
     return cell_set
-
-
-def frange(start: float, stop: float, step: float):
-    value = start
-    eps = 0.5 * step
-    while value <= stop + eps:
-        yield value
-        value += step
-
-
-def scale_concentration_to_cm3(cell_set, dose_cm2: float, beam_spacing: float):
-    concentration = cell_set.getScalarData("concentration")
-    dose_nm2 = dose_cm2 / 1.0e14
-    dose_per_beam = dose_nm2 * beam_spacing
-    scaled = [value * dose_per_beam * 1.0e21 for value in concentration]
-    cell_set.setScalarData("concentration", scaled)
-
-
-def compute_beam_hits(
-    cell_set,
-    opening_width: float,
-    entry_height: float,
-    angle_deg: float,
-    beam_spacing: float,
-):
-    beam_hits = [0.0] * cell_set.getNumberOfCells()
-    materials = cell_set.getScalarData("Material")
-    angle = math.radians(angle_deg)
-
-    for x_mask in frange(-0.5 * opening_width, 0.5 * opening_width, beam_spacing):
-        for idx in range(cell_set.getNumberOfCells()):
-            x_pos, y_pos, _ = cell_set.getCellCenter(idx)
-            if materials[idx] != 1.0:
-                continue
-
-            depth_axis = -y_pos
-            if depth_axis < 0.0:
-                continue
-
-            # Follow the centerline of the tilted beam from the top entry
-            # plane down into the substrate so the beam-hit field matches the
-            # apparent implant angle.
-            x_beam = x_mask - math.tan(angle) * (entry_height + depth_axis)
-            if abs(x_beam - x_pos) <= 0.5 * beam_spacing:
-                beam_hits[idx] += 1.0
-
-    cell_set.setScalarData("beamHits", beam_hits)
 
 
 def main() -> int:
@@ -186,26 +134,23 @@ def main() -> int:
     beam_spacing = params.get("beamSpacing", grid_delta)
     implant_dose_cm2 = params.get("doseCm2", 1.0e15)
     substrate_type = str(params.get("substrateType", "amorphous")).strip().lower()
+    species = str(params.get("species", "B"))
+    material = str(params.get("material", "Si"))
+    energy_kev = params.get("energyKeV", 10.0)
+    rotation_deg = params.get("rotationDeg", 0.0)
+    screen_thickness = params.get("screenThickness", 0.0)
+    damage_level = params.get("damageLevel", 0.0)
+    dose_control = str(params.get("doseControl", "WaferDose"))
+    preferred_model = str(
+        params.get(
+            "preferredModel",
+            "DualPearsonIV" if substrate_type == "crystalline" else "PearsonIV",
+        )
+    )
 
-    # Representative low-energy B-in-Si moments for a shallow 10 keV implant
-    # into Si(100). Rp is anchored to the commonly cited ~31 nm projected
-    # range for B in Si at 10 keV, while skewness/kurtosis are chosen as a
-    # realistic positively skewed Pearson IV profile for the random component.
-    # Lateral spread is kept Gaussian as defined by ImplantPearsonIV.
-    projected_range = params.get("projectedRange", 31.0)
-    depth_sigma = params.get("depthSigma", 11.0)
-    skewness = params.get("skewness", 1.15)
-    kurtosis = params.get("kurtosis", 6.2)
-    lateral_sigma = params.get("lateralSigma", 9.0)
-    lateral_mu = params.get("lateralMu", 0.0)
-
-    # Crystalline Si is represented with a dual-Pearson model:
-    # one Pearson-IV for the random component and one for the channeling tail.
-    head_fraction = params.get("headFraction", 0.97)
-    tail_projected_range = params.get("tailProjectedRange", 85.0)
-    tail_depth_sigma = params.get("tailDepthSigma", 28.0)
-    tail_skewness = params.get("tailSkewness", 0.35)
-    tail_kurtosis = params.get("tailKurtosis", 3.2)
+    if "_vcs" not in globals() or not hasattr(vcs, "RecipeDrivenImplantModel"):
+        print("This example requires the unified viennacs package with RecipeDrivenImplantModel.")
+        return 2
 
     structure = make_structure(
         x_extent,
@@ -217,47 +162,97 @@ def main() -> int:
     )
     cell_set = build_cell_set(structure, top_space)
     cell_set.writeVTU("initial.vtu")
+    recipe = _vcs.ImplantRecipe()
+    recipe.species = species
+    recipe.material = material
+    recipe.substrateType = substrate_type
+    recipe.preferredModel = preferred_model
+    recipe.energyKeV = energy_kev
+    recipe.tiltDeg = angle
+    recipe.rotationDeg = rotation_deg
+    recipe.screenThickness = screen_thickness
+    recipe.damageLevel = damage_level
+    recipe.tableFileName = str(
+        params.get("tablePath", _vcs.getDefaultImplantTablePath())
+    )
+    recipe.useTableLookup = "projectedRange" not in params
 
-    pearson = PearsonIVParameters()
-    pearson.mu = projected_range
-    pearson.sigma = depth_sigma
-    pearson.gamma = skewness
-    pearson.beta = kurtosis
+    if not recipe.useTableLookup:
+        entry = recipe.entry
+        entry.modelType = preferred_model
+        entry.headFraction = params.get("headFraction", 0.97)
+        entry.screenDecayLength = params.get("screenDecayLength", 0.0)
+        entry.damageDecay = params.get("damageDecay", 0.0)
+        entry.tiltDecayDeg = params.get("tiltDecayDeg", 0.0)
+        entry.reshapeStrength = params.get("reshapeStrength", 1.0)
 
-    tail_pearson = PearsonIVParameters()
-    tail_pearson.mu = tail_projected_range
-    tail_pearson.sigma = tail_depth_sigma
-    tail_pearson.gamma = tail_skewness
-    tail_pearson.beta = tail_kurtosis
+        entry.headParams.mu = params.get("projectedRange", 31.0)
+        entry.headParams.sigma = params.get("depthSigma", 11.0)
+        entry.headParams.gamma = params.get("skewness", 1.15)
+        entry.headParams.beta = params.get("kurtosis", 6.2)
+        entry.headLateralMu = params.get("lateralMu", 0.0)
+        entry.headLateralSigma = params.get("lateralSigma", 5.0)
+        entry.headLateralModel = str(params.get("headLateralModel", params.get("lateralModel", "constant")))
+        entry.headLateralScale = params.get("headLateralScale", 1.0)
+        entry.headLateralLv = params.get("headLateralLv", 1.0)
+        entry.headLateralDeltaSigma = params.get("headLateralDeltaSigma", 0.0)
+        entry.headLateralP1 = params.get("headLateralP1", 0.0)
+        entry.headLateralP2 = params.get("headLateralP2", 0.0)
+        entry.headLateralP3 = params.get("headLateralP3", 0.0)
+        entry.headLateralP4 = params.get("headLateralP4", 0.0)
+        entry.headLateralP5 = params.get("headLateralP5", 0.0)
 
-    if substrate_type == "crystalline":
-        model = vcs.ImplantDualPearsonIV(
-            pearson,
-            tail_pearson,
-            head_fraction,
-            lateral_mu,
-            lateral_sigma,
+        entry.tailParams.mu = params.get("tailProjectedRange", 85.0)
+        entry.tailParams.sigma = params.get("tailDepthSigma", 28.0)
+        entry.tailParams.gamma = params.get("tailSkewness", 0.35)
+        entry.tailParams.beta = params.get("tailKurtosis", 4.0)
+        entry.tailLateralMu = params.get("tailLateralMu", entry.headLateralMu)
+        entry.tailLateralSigma = params.get("tailLateralSigma", 6.0)
+        entry.tailLateralModel = str(params.get("tailLateralModel", entry.headLateralModel))
+        entry.tailLateralScale = params.get("tailLateralScale", entry.headLateralScale)
+        entry.tailLateralLv = params.get("tailLateralLv", entry.headLateralLv)
+        entry.tailLateralDeltaSigma = params.get(
+            "tailLateralDeltaSigma", entry.headLateralDeltaSigma
         )
-    else:
-        model = vcs.ImplantPearsonIV(pearson, lateral_mu, lateral_sigma)
+        entry.tailLateralP1 = params.get("tailLateralP1", entry.headLateralP1)
+        entry.tailLateralP2 = params.get("tailLateralP2", entry.headLateralP2)
+        entry.tailLateralP3 = params.get("tailLateralP3", entry.headLateralP3)
+        entry.tailLateralP4 = params.get("tailLateralP4", entry.headLateralP4)
+        entry.tailLateralP5 = params.get("tailLateralP5", entry.headLateralP5)
+
+    model = vcs.RecipeDrivenImplantModel(recipe)
+    if recipe.useTableLookup:
+        print(f"Using implant table defaults from {recipe.tableFileName}")
 
     implant = vcs.Implant()
     implant.setCellSet(cell_set)
     implant.setImplantModel(model)
     implant.setImplantAngle(angle)
+    if "_vcs" in globals() and hasattr(_vcs, "ImplantDoseControl"):
+        dose_modes = {
+            "off": _vcs.ImplantDoseControl.Off,
+            "waferdose": _vcs.ImplantDoseControl.WaferDose,
+            "beamdose": _vcs.ImplantDoseControl.BeamDose,
+        }
+        implant.setDoseControl(
+            dose_modes.get(dose_control.strip().lower(), _vcs.ImplantDoseControl.WaferDose)
+        )
+    if hasattr(implant, "setDose"):
+        implant.setDose(implant_dose_cm2)
+    if hasattr(implant, "setLengthUnitInCm"):
+        implant.setLengthUnitInCm(1.0e-7)
+    if hasattr(implant, "enableBeamHits"):
+        implant.enableBeamHits(True)
+    if hasattr(implant, "setOutputConcentrationInCm3"):
+        implant.setOutputConcentrationInCm3(True)
     implant.setMaskMaterials([2])
     implant.apply()
 
     if abs(beam_spacing - grid_delta) > 1e-9:
         print(
             f"Note: ViennaCS core Implant uses gridDelta={grid_delta} as the beam spacing. "
-            f"The config value beamSpacing={beam_spacing} is used only for the beamHits visualization."
+            f"The config value beamSpacing={beam_spacing} is currently not used by the core implant."
         )
-
-    scale_concentration_to_cm3(cell_set, implant_dose_cm2, grid_delta)
-    compute_beam_hits(
-        cell_set, opening_width, top_space + mask_height, angle, beam_spacing
-    )
 
     cell_set.writeVTU("final.vtu")
     print("Wrote initial.vtu and final.vtu")

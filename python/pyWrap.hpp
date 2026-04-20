@@ -33,6 +33,7 @@
 #include <csVersion.hpp>
 #include <models/csImplantGaussian.hpp>
 #include <models/csImplantPearson.hpp>
+#include <models/csImplantTable.hpp>
 
 using namespace viennacs;
 
@@ -240,6 +241,7 @@ template <int D> void bindAPI(py::module &module) {
       module, "ImplantModel")
       .def("getDepthProfile", &ImplantModel<T, D>::getDepthProfile)
       .def("getLateralProfile", &ImplantModel<T, D>::getLateralProfile)
+      .def("getProfile", &ImplantModel<T, D>::getProfile)
       .def("getMaxDepth", &ImplantModel<T, D>::getMaxDepth)
       .def("getMaxLateralRange", &ImplantModel<T, D>::getMaxLateralRange);
 
@@ -253,7 +255,10 @@ template <int D> void bindAPI(py::module &module) {
                                                    "ImplantPearsonIV")
       .def(py::init<const constants::PearsonIVParameters<T> &, T, T>(),
            py::arg("params"), py::arg("lateralMu"),
-           py::arg("lateralSigma"));
+           py::arg("lateralSigma"))
+      .def(py::init<const constants::PearsonIVParameters<T> &,
+                    const LateralStraggleParameters<T> &>(),
+           py::arg("params"), py::arg("lateralParams"));
 
   py::class_<ImplantPearsonIVChanneling<T, D>, ImplantModel<T, D>,
              SmartPointer<ImplantPearsonIVChanneling<T, D>>>(
@@ -269,15 +274,56 @@ template <int D> void bindAPI(py::module &module) {
              SmartPointer<ImplantDualPearsonIV<T, D>>>(
       module, "ImplantDualPearsonIV")
       .def(py::init<const constants::PearsonIVParameters<T> &,
-                    const constants::PearsonIVParameters<T> &, T, T, T>(),
+                    const constants::PearsonIVParameters<T> &, T, T, T, T, T>(),
            py::arg("headParams"), py::arg("tailParams"),
-           py::arg("headFraction"), py::arg("lateralMu"),
-           py::arg("lateralSigma"));
+           py::arg("headFraction"), py::arg("headLateralMu"),
+           py::arg("headLateralSigma"), py::arg("tailLateralMu"),
+           py::arg("tailLateralSigma"))
+      .def(py::init<const constants::PearsonIVParameters<T> &,
+                    const constants::PearsonIVParameters<T> &, T,
+                    const LateralStraggleParameters<T> &,
+                    const LateralStraggleParameters<T> &>(),
+           py::arg("headParams"), py::arg("tailParams"),
+           py::arg("headFraction"), py::arg("headLateralParams"),
+           py::arg("tailLateralParams"));
+
+  py::class_<tables::TableDrivenImplantModel<T, D>, ImplantModel<T, D>,
+             SmartPointer<tables::TableDrivenImplantModel<T, D>>>(
+      module, "TableDrivenImplantModel")
+      .def(py::init<const std::string &, const std::string &, const std::string &,
+                    const std::string &, T, T, T, T, T, const std::string &>(),
+           py::arg("fileName"), py::arg("species"), py::arg("material"),
+           py::arg("substrateType"), py::arg("energyKeV"),
+           py::arg("tiltDeg"), py::arg("rotationDeg"),
+           py::arg("screenThickness") = T(0),
+           py::arg("damageLevel") = T(0),
+           py::arg("preferredModel") = "auto")
+      .def("getSelectedEntry",
+           &tables::TableDrivenImplantModel<T, D>::getSelectedEntry);
+
+  py::class_<tables::RecipeDrivenImplantModel<T, D>, ImplantModel<T, D>,
+             SmartPointer<tables::RecipeDrivenImplantModel<T, D>>>(
+      module, "RecipeDrivenImplantModel")
+      .def(py::init<const tables::ImplantRecipe<T> &, const std::string &>(),
+           py::arg("recipe"), py::arg("defaultTableFileName") = "")
+      .def("getRecipe", &tables::RecipeDrivenImplantModel<T, D>::getRecipe)
+      .def("getSelectedEntry",
+           &tables::RecipeDrivenImplantModel<T, D>::getSelectedEntry);
 
   py::class_<Implant<T, D>>(module, "Implant")
       .def(py::init<>())
       .def("setCellSet", &Implant<T, D>::setCellSet)
       .def("setImplantAngle", &Implant<T, D>::setImplantAngle)
+      .def("setDose", &Implant<T, D>::setDose)
+      .def("setLengthUnitInCm", &Implant<T, D>::setLengthUnitInCm)
+      .def("setDoseControl", &Implant<T, D>::setDoseControl)
+      .def("enableBeamHits", &Implant<T, D>::enableBeamHits,
+           py::arg("enable") = true)
+      .def("setConcentrationLabel", &Implant<T, D>::setConcentrationLabel)
+      .def("setBeamHitsLabel", &Implant<T, D>::setBeamHitsLabel)
+      .def("setOutputConcentrationInCm3",
+           &Implant<T, D>::setOutputConcentrationInCm3,
+           py::arg("enable") = true)
       .def("setImplantModel", &Implant<T, D>::setImplantModel)
       .def(
           "setMaskMaterials",

@@ -63,6 +63,10 @@ install(
 
 # Package files
 install(FILES ${CMAKE_SOURCE_DIR}/python/__init__.py DESTINATION ${PKG})
+install(
+  DIRECTORY ${CMAKE_SOURCE_DIR}/data/implant
+  DESTINATION ${PKG}/data
+  OPTIONAL)
 
 add_dependencies(${PROJECT_NAME} ${MOD})
 
