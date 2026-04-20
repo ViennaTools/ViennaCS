@@ -1,5 +1,9 @@
 build/
 .vscode/
+.venv/
+.codex/
+__pycache__/
+.codex
 
 # Prerequisites
 *.d
@@ -33,3 +37,6 @@ build/
 *.exe
 *.out
 *.app
+
+# Example outputs
+*.vtu

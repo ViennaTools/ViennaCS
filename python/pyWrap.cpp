@@ -25,8 +25,13 @@
 // all header files which define API functions
 #include <csAtomicLayerProcess.hpp>
 #include <csDenseCellSet.hpp>
+#include <csImplant.hpp>
+#include <csImplantModel.hpp>
 #include <csMeanFreePath.hpp>
 #include <csSegmentCells.hpp>
+#include <csConstants.hpp>
+#include <models/csImplantGaussian.hpp>
+#include <models/csImplantPearson.hpp>
 
 using namespace viennacs;
 
@@ -90,6 +95,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
            "Get the surface level-set.")
       .def("getCellGrid", &DenseCellSet<T, D>::getCellGrid,
            "Get the underlying mesh of the cell set.")
+      .def("getLevelSets", &DenseCellSet<T, D>::getLevelSets,
+           "Get the level sets used to construct the cell set.")
       .def("getNumberOfCells", &DenseCellSet<T, D>::getNumberOfCells,
            "Get the number of cells.")
       .def("getFillingFraction", &DenseCellSet<T, D>::getFillingFraction,
@@ -104,6 +111,22 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def("getScalarData", &DenseCellSet<T, D>::getScalarData,
            "Get the data stored at each cell. WARNING: This function only "
            "returns a copy of the data")
+      .def(
+          "setScalarData",
+          [](DenseCellSet<T, D> &cellSet, const std::string &name,
+             const std::vector<T> &values) {
+            auto data = cellSet.getScalarData(name);
+            if (data == nullptr) {
+              data = cellSet.addScalarData(name, 0.);
+            }
+            if (data->size() != values.size()) {
+              throw std::runtime_error(
+                  "setScalarData received incompatible data size.");
+            }
+            *data = values;
+          },
+          pybind11::arg("name"), pybind11::arg("values"),
+          "Replace the scalar data stored at each cell.")
       .def("getScalarDataLabels", &DenseCellSet<T, D>::getScalarDataLabels,
            "Get the labels of the scalar data stored in the cell set.")
       .def("getIndex", &DenseCellSet<T, D>::getIndex,
@@ -111,6 +134,8 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def("setCellSetPosition", &DenseCellSet<T, D>::setCellSetPosition,
            "Set whether the cell set should be created below (false) or above "
            "(true) the surface.")
+      .def("getCellSetPosition", &DenseCellSet<T, D>::getCellSetPosition,
+           "Get whether the cell set is created below or above the surface.")
       .def(
           "setCoverMaterial", &DenseCellSet<T, D>::setCoverMaterial,
           "Set the material of the cells which are above or below the surface.")
@@ -225,4 +250,90 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
                      &AtomicLayerProcess<T, D>::Precursor::desorptionRate)
       .def_readwrite("duration", &AtomicLayerProcess<T, D>::Precursor::duration)
       .def_readwrite("inFlux", &AtomicLayerProcess<T, D>::Precursor::inFlux);
+
+  // Implantation
+  pybind11::class_<constants::PearsonIVParameters<T>>(module,
+                                                      "PearsonIVParameters")
+      .def(pybind11::init<>())
+      .def_readwrite("mu", &constants::PearsonIVParameters<T>::mu)
+      .def_readwrite("sigma", &constants::PearsonIVParameters<T>::sigma)
+      .def_readwrite("beta", &constants::PearsonIVParameters<T>::beta)
+      .def_readwrite("gamma", &constants::PearsonIVParameters<T>::gamma);
+
+  pybind11::class_<ImplantModel<T, D>, SmartPointer<ImplantModel<T, D>>>(
+      module, "ImplantModel")
+      .def("getDepthProfile", &ImplantModel<T, D>::getDepthProfile)
+      .def("getLateralProfile", &ImplantModel<T, D>::getLateralProfile)
+      .def("getMaxDepth", &ImplantModel<T, D>::getMaxDepth);
+
+  pybind11::class_<ImplantGaussian<T, D>, ImplantModel<T, D>,
+                   SmartPointer<ImplantGaussian<T, D>>>(module,
+                                                        "ImplantGaussian")
+      .def(pybind11::init<T, T, T, T>(), pybind11::arg("mu"),
+           pybind11::arg("sigma"), pybind11::arg("lateralSigma"),
+           pybind11::arg("lateralMu"));
+
+  pybind11::class_<ImplantPearsonIV<T, D>, ImplantModel<T, D>,
+                   SmartPointer<ImplantPearsonIV<T, D>>>(module,
+                                                         "ImplantPearsonIV")
+      .def(pybind11::init<const constants::PearsonIVParameters<T> &, T, T>(),
+           pybind11::arg("params"), pybind11::arg("lateralMu"),
+           pybind11::arg("lateralSigma"));
+
+  pybind11::class_<Implant<T, D>>(module, "Implant")
+      .def(pybind11::init<>())
+      .def("setCellSet", &Implant<T, D>::setCellSet)
+      .def("setImplantAngle", &Implant<T, D>::setImplantAngle)
+      .def("setImplantModel", &Implant<T, D>::setImplantModel)
+      .def(
+          "setMaskMaterials",
+          [](Implant<T, D> &implant, const std::vector<int> &materials) {
+            switch (materials.size()) {
+            case 0:
+              implant.setMaskMaterials();
+              break;
+            case 1:
+              implant.setMaskMaterials(materials[0]);
+              break;
+            case 2:
+              implant.setMaskMaterials(materials[0], materials[1]);
+              break;
+            case 3:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2]);
+              break;
+            case 4:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2], materials[3]);
+              break;
+            case 5:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2], materials[3],
+                                       materials[4]);
+              break;
+            case 6:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2], materials[3],
+                                       materials[4], materials[5]);
+              break;
+            case 7:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2], materials[3],
+                                       materials[4], materials[5],
+                                       materials[6]);
+              break;
+            case 8:
+              implant.setMaskMaterials(materials[0], materials[1],
+                                       materials[2], materials[3],
+                                       materials[4], materials[5],
+                                       materials[6], materials[7]);
+              break;
+            default:
+              throw std::runtime_error(
+                  "setMaskMaterials currently supports up to 8 materials.");
+            }
+          },
+          pybind11::arg("materials"),
+          "Set the material IDs to be treated as mask materials.")
+      .def("apply", &Implant<T, D>::apply);
 }

@@ -259,7 +259,7 @@ public:
   }
 
   std::vector<T> *addScalarData(std::string name, T initValue = 0.) {
-    if (cellGrid->getCellData().getScalarData(name, false) != nullptr) {
+    if (cellGrid->getCellData().getScalarData(name, true) != nullptr) {
       auto data = cellGrid->getCellData().getScalarData(name);
       data->resize(numberOfCells, initValue);
       std::fill(data->begin(), data->end(), initValue);
@@ -269,7 +269,7 @@ public:
     cellGrid->getCellData().insertNextScalarData(std::move(newData), name);
     fillingFractions_ =
         cellGrid->getCellData().getScalarData("FillingFraction");
-    return cellGrid->getCellData().getScalarData(name);
+    return cellGrid->getCellData().getScalarData(name, true);
   }
 
   T getDepth() const { return depth; }
@@ -548,12 +548,7 @@ public:
           }
 
           if (isVoxel) {
-            if (matMapPtr) {
-              materialIds->at(cellIdx++) =
-                  indexToMaterial(materialId, matMapPtr);
-            } else {
-              materialIds->at(cellIdx++) = materialId;
-            }
+            materialIds->at(cellIdx++) = indexToMaterial(materialId);
           }
 
           // jump out of material for loop

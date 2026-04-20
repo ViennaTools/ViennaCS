@@ -1,0 +1,30 @@
+gridDelta=0.25
+xExtent=40.0
+topSpace=6.0
+implantDepth=50.0
+
+openingWidth=8.0
+maskHeight=4.0
+
+# Example target: B, 10 keV, Si(100), 7 degree tilt
+angle=7.0
+beamSpacing=0.25
+doseCm2=1.0e15
+substrateType=crystalline
+
+# Representative random-component parameters for B in Si at 10 keV.
+# Units in this example are nm.
+projectedRange=31.0
+depthSigma=11.0
+skewness=1.15
+kurtosis=6.2
+lateralSigma=9.0
+lateralMu=0.0
+
+# Optional crystalline-Si channeling tail. Set substrateType=amorphous to disable.
+# Defaults here target Si(100) with a 7 degree tilt, so the tail is present
+# but modest.
+tailFraction=0.03
+tailStartDepth=45.0
+tailDecayLength=55.0
+tailBlendWidth=20.0
