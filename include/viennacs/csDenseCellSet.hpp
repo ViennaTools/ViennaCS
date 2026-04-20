@@ -11,7 +11,7 @@
 #include <lsVTKWriter.hpp>
 
 #include <vcUtil.hpp>
-#include <vcVectorUtil.hpp>
+#include <vcVectorType.hpp>
 
 #include <bitset>
 
@@ -37,11 +37,11 @@ private:
 
   T gridDelta;
   T depth = 0.;
-  std::size_t numberOfCells;
+  size_t numberOfCells = 0;
   int BVHlayers = 0;
 
   std::vector<std::array<int, 2 * D>> cellNeighbors; // -x, x, -y, y, -z, z
-  hrleVectorType<hrleIndexType, D> minIndex, maxIndex;
+  viennahrle::Index<D> minIndex, maxIndex;
 
   bool cellSetAboveSurface = false;
   int coverMaterial = -1;
@@ -88,8 +88,8 @@ public:
       cellGrid->maximumExtent[i] = std::numeric_limits<T>::lowest();
     }
 
-    std::unordered_map<hrleVectorType<hrleIndexType, D>, size_t,
-                       typename hrleVectorType<hrleIndexType, D>::hash>
+    std::unordered_map<viennahrle::Index<D>, size_t,
+                       typename viennahrle::Index<D>::hash>
         pointIdMapping;
     size_t currentPointId = 0;
 
@@ -103,19 +103,16 @@ public:
     const bool useMaterialMap = materialMap != nullptr;
 
     // set up iterators for all materials
-    std::vector<
-        hrleConstDenseCellIterator<typename viennals::Domain<T, D>::DomainType>>
+    std::vector<viennahrle::ConstDenseCellIterator<
+        typename viennals::Domain<T, D>::DomainType>>
         iterators;
     for (auto it = levelSetsInOrder.begin(); it != levelSetsInOrder.end();
          ++it) {
-      iterators.push_back(hrleConstDenseCellIterator<
-                          typename viennals::Domain<T, D>::DomainType>(
-          (*it)->getDomain(), minIndex));
+      iterators.emplace_back((*it)->getDomain(), minIndex);
     }
 
     // move iterator for lowest material id and then adjust others if they are
     // needed
-    unsigned counter = 0;
     for (; iterators.front().getIndices() < maxIndex;
          iterators.front().next()) {
       // go over all materials
@@ -127,17 +124,17 @@ public:
         cellIt.goToIndicesSequential(iterators.front().getIndices());
 
         // find out whether the centre of the box is inside
-        T centerValue = 0.;
+        double centerValue = 0.;
         for (int i = 0; i < (1 << D); ++i) {
           centerValue += cellIt.getCorner(i).getValue();
         }
 
         if (centerValue <= 0.) {
           std::array<unsigned, 1 << D> voxel;
-          bool addVoxel;
+          bool addVoxel = false;
           // now insert all points of voxel into pointList
           for (unsigned i = 0; i < (1 << D); ++i) {
-            hrleVectorType<hrleIndexType, D> index;
+            viennahrle::Index<D> index;
             addVoxel = true;
             for (unsigned j = 0; j < D; ++j) {
               index[j] =
@@ -163,7 +160,7 @@ public:
           if (addVoxel) {
             int material = materialId;
             if (useMaterialMap)
-              material = materialMap->getMaterialId(materialId);
+              material = indexToMaterial(materialId, materialMap);
 
             if constexpr (D == 3) {
               // reorder elements for hexas to be ordered correctly
@@ -214,7 +211,7 @@ public:
     viennals::VTKWriter<T>(cellGrid, "cellSet_debug_init.vtu").apply();
 #endif
 
-    adjustMaterialIds();
+    // adjustMaterialIds();
     fillingFractions_ =
         cellGrid->getCellData().getScalarData("FillingFraction");
 
@@ -243,13 +240,12 @@ public:
     buildBVH();
   }
 
-  Vec2D<std::array<T, D>> getBoundingBox() const {
+  std::array<VectorType<T, D>, 2> getBoundingBox() const {
     if constexpr (D == 3)
-      return Vec2D<Vec3D<T>>{cellGrid->minimumExtent, cellGrid->maximumExtent};
+      return {cellGrid->minimumExtent, cellGrid->maximumExtent};
     else
-      return Vec2D<Vec2D<T>>{
-          cellGrid->minimumExtent[0], cellGrid->minimumExtent[1],
-          cellGrid->maximumExtent[0], cellGrid->maximumExtent[1]};
+      return {Vec2D<T>{cellGrid->minimumExtent[0], cellGrid->minimumExtent[1]},
+              Vec2D<T>{cellGrid->maximumExtent[0], cellGrid->maximumExtent[1]}};
   }
 
   void setPeriodicBoundary(std::array<bool, D> isPeriodic) {
@@ -272,15 +268,26 @@ public:
     return cellGrid->getCellData().getScalarData(name, true);
   }
 
+  std::vector<std::array<T, 3>> *
+  addVectorData(std::string name, std::array<T, 3> initValue = {0., 0., 0.}) {
+    if (cellGrid->getCellData().getVectorData(name, false) != nullptr) {
+      auto data = cellGrid->getCellData().getVectorData(name);
+      data->resize(numberOfCells, initValue);
+      std::fill(data->begin(), data->end(), initValue);
+      return data;
+    }
+    std::vector<std::array<T, 3>> newData(numberOfCells, initValue);
+    cellGrid->getCellData().insertNextVectorData(std::move(newData), name);
+    return cellGrid->getCellData().getVectorData(name);
+  }
+
   T getDepth() const { return depth; }
 
   T getGridDelta() const { return gridDelta; }
 
-  std::vector<std::array<T, 3>> &getNodes() const {
-    return cellGrid->getNodes();
-  }
+  std::vector<Vec3D<T>> &getNodes() const { return cellGrid->getNodes(); }
 
-  const std::array<T, 3> &getNode(unsigned int idx) const {
+  const Vec3D<T> &getNode(unsigned int idx) const {
     return cellGrid->getNodes()[idx];
   }
 
@@ -330,7 +337,7 @@ public:
     return sum / count;
   }
 
-  std::array<T, 3> getCellCenter(unsigned long idx) const {
+  Vec3D<T> getCellCenter(unsigned long idx) const {
     auto center =
         cellGrid
             ->getNodes()[cellGrid->template getElements<(1 << D)>()[idx][0]];
@@ -339,10 +346,69 @@ public:
     return center;
   }
 
-  int getIndex(const std::array<T, 3> &point) const { return findIndex(point); }
+  int getIndex(const Vec3D<T> &point) const { return findIndex(point); }
 
   std::vector<T> *getScalarData(std::string name) {
     return cellGrid->getCellData().getScalarData(name);
+  }
+
+  std::vector<std::array<T, 3>> *getVectorData(std::string name) {
+    return cellGrid->getCellData().getVectorData(name);
+  }
+
+  // --------------------------------------------------------------------------
+  // ADD TO PUBLIC SECTION OF csDenseCellSet.hpp
+  // --------------------------------------------------------------------------
+
+  void setScalarData(std::string name, const std::vector<T> &newData) {
+    // 1. Check size
+    if (newData.size() != this->getNumberOfCells()) {
+      Logger::getInstance()
+          .addError("setScalarData: Size mismatch. Expected " +
+                    std::to_string(this->getNumberOfCells()) + ", got " +
+                    std::to_string(newData.size()))
+          .print();
+      return;
+    }
+
+    // 2. Get the MUTABLE pointer using the existing public API
+    // In C++, this returns std::vector<T>*
+    auto *dataPtr = this->getScalarData(name);
+
+    if (!dataPtr) {
+      Logger::getInstance()
+          .addWarning("setScalarData: Label '" + name +
+                      "' not found. Ignoring.")
+          .print();
+      return;
+    }
+
+    // 3. Overwrite the data in place
+    // This dereferences the pointer (*dataPtr) and assigns the new vector to
+    // it.
+    *dataPtr = newData;
+  }
+
+  void setVectorData(std::string name,
+                     const std::vector<std::array<T, 3>> &newData) {
+    if (newData.size() != this->getNumberOfCells()) {
+      Logger::getInstance().addError("setVectorData: Size mismatch.").print();
+      return;
+    }
+
+    // Use existing public API
+    auto *dataPtr = this->getVectorData(name);
+
+    if (!dataPtr) {
+      Logger::getInstance()
+          .addWarning("setVectorData: Label '" + name +
+                      "' not found. Ignoring.")
+          .print();
+      return;
+    }
+
+    // Vector assignment
+    *dataPtr = newData;
   }
 
   std::vector<std::string> getScalarDataLabels() const {
@@ -376,7 +442,7 @@ public:
   }
 
   // Sets the filling fraction for cell which contains given point.
-  bool setFillingFraction(const std::array<T, 3> &point, const T fill) {
+  bool setFillingFraction(const Vec3D<T> &point, const T fill) {
     auto idx = findIndex(point);
     return setFillingFraction(idx, fill);
   }
@@ -391,14 +457,14 @@ public:
   }
 
   // Add to the filling fraction for cell which contains given point.
-  bool addFillingFraction(const std::array<T, 3> &point, T fill) {
+  bool addFillingFraction(const Vec3D<T> &point, T fill) {
     auto idx = findIndex(point);
     return addFillingFraction(idx, fill);
   }
 
   // Add to the filling fraction for cell which contains given point only if the
   // cell has the specified material ID.
-  bool addFillingFractionInMaterial(const std::array<T, 3> &point, T fill,
+  bool addFillingFractionInMaterial(const Vec3D<T> &point, T fill,
                                     int materialId) {
     auto idx = findIndex(point);
     if (getScalarData("Material")->at(idx) == materialId)
@@ -408,12 +474,12 @@ public:
   }
 
   // Write the cell set as .vtu file
-  void writeVTU(std::string fileName) {
+  void writeVTU(const std::string &fileName) {
     viennals::VTKWriter<T>(cellGrid, fileName).apply();
   }
 
   // Save cell set data in simple text format
-  void writeCellSetData(std::string fileName) const {
+  void writeCellSetData(const std::string &fileName) const {
     auto numScalarData = cellGrid->getCellData().getScalarDataSize();
 
     std::ofstream file(fileName);
@@ -435,7 +501,7 @@ public:
   }
 
   // Read cell set data from text
-  void readCellSetData(std::string fileName) {
+  void readCellSetData(const std::string &fileName) {
     std::ifstream file(fileName);
     std::string line;
 
@@ -463,15 +529,15 @@ public:
     }
 
     std::vector<std::vector<T> *> cellDataP;
-    for (int i = 0; i < labels.size(); i++) {
-      auto dataP = getScalarData(labels[i]);
+    for (auto &label : labels) {
+      auto dataP = getScalarData(label);
       if (dataP == nullptr) {
-        dataP = addScalarData(labels[i], 0.);
+        addScalarData(label, 0.);
       }
     }
 
-    for (int i = 0; i < labels.size(); i++) {
-      cellDataP.push_back(getScalarData(labels[i]));
+    for (auto &label : labels) {
+      cellDataP.push_back(getScalarData(label));
     }
 
     std::size_t j = 0;
@@ -506,8 +572,8 @@ public:
     auto levelSetsInOrder = getLevelSetsInOrder();
 
     // set up iterators for all materials
-    std::vector<
-        hrleConstDenseCellIterator<typename viennals::Domain<T, D>::DomainType>>
+    std::vector<viennahrle::ConstDenseCellIterator<
+        typename viennals::Domain<T, D>::DomainType>>
         iterators;
     for (const auto &ls : levelSetsInOrder) {
       iterators.emplace_back(ls->getDomain(), minIndex);
@@ -536,7 +602,7 @@ public:
           bool isVoxel = true;
           // check if voxel is in bounds
           for (unsigned i = 0; i < (1 << D) && isVoxel; ++i) {
-            hrleVectorType<hrleIndexType, D> index;
+            viennahrle::Index<D> index;
             for (unsigned j = 0; j < D; ++j) {
               index[j] =
                   cellIt.getIndices(j) + cellIt.getCorner(i).getOffset()[j];
@@ -591,7 +657,7 @@ public:
 
     auto numScalarData = cellGrid->getCellData().getScalarDataSize();
 
-    for (int elIdx = nCutCells - 1; elIdx >= 0; elIdx--) {
+    for (int elIdx = nCutCells - 1; elIdx >= 0; --elIdx) {
       if (cutMatIds->at(elIdx) == 2) {
         for (int i = 0; i < numScalarData; i++) {
           auto data = cellGrid->getCellData().getScalarData(i);
@@ -739,6 +805,7 @@ private:
   }
 
   void adjustMaterialIds() {
+    // This assumes the current material IDs correspond to the level-set index
     auto matIds = getScalarData("Material");
 
 #pragma omp parallel for
@@ -838,8 +905,8 @@ private:
                            &levelSetsInOrder) {
     // set to zero
     for (unsigned i = 0; i < D; ++i) {
-      minIndex[i] = std::numeric_limits<hrleIndexType>::max();
-      maxIndex[i] = std::numeric_limits<hrleIndexType>::lowest();
+      minIndex[i] = std::numeric_limits<viennahrle::IndexType>::max();
+      maxIndex[i] = std::numeric_limits<viennahrle::IndexType>::lowest();
     }
     for (unsigned l = 0; l < levelSetsInOrder.size(); ++l) {
       auto &grid = levelSetsInOrder[l]->getGrid();
@@ -856,7 +923,7 @@ private:
     }
   }
 
-  std::bitset<2 * D> isBoundaryCell(const std::array<T, 3> &cellCoord) {
+  std::bitset<2 * D> isBoundaryCell(const Vec3D<T> &cellCoord) {
     std::bitset<2 * D> onBoundary;
     for (int i = 0; i < 2 * D; i += 2) {
       if (!periodicBoundary[i / 2])

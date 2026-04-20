@@ -1,4 +1,9 @@
-import viennacs2d as vcs
+import viennacs as vcs
+import viennals as vls
+
+D = 2
+vcs.setDimension(D)
+vls.setDimension(D)
 
 
 # Config file reader helper function
@@ -39,7 +44,7 @@ def ReadConfigFile(fileName: str):
 
 def makeLShape(params: dict):
     try:
-        import viennals2d as vls
+        import viennals as vls
     except ImportError:
         print(
             "The ViennaLS Python library is required to run this example. "
@@ -48,10 +53,10 @@ def makeLShape(params: dict):
         return
 
     gridDelta = params["gridDelta"]
-    bounds = [0] * vcs.D * 2
+    bounds = [0] * D * 2
     bounds[0] = -params["verticalWidth"] / 2.0 - params["xPad"]
     bounds[1] = params["verticalWidth"] / 2.0 + params["xPad"]
-    if vcs.D == 3:
+    if D == 3:
         bounds[2] = -params["verticalWidth"] / 2.0 - params["xPad"]
         bounds[3] = (
             -params["verticalWidth"] / 2.0 + params["xPad"] + params["horizontalWidth"]
@@ -61,24 +66,24 @@ def makeLShape(params: dict):
             -params["verticalWidth"] / 2.0 + params["xPad"] + params["horizontalWidth"]
         )
 
-    boundaryCons = [vls.BoundaryConditionEnum.REFLECTIVE_BOUNDARY] * (vcs.D - 1)
+    boundaryCons = [vls.BoundaryConditionEnum.REFLECTIVE_BOUNDARY] * (D - 1)
     boundaryCons.append(vls.BoundaryConditionEnum.INFINITE_BOUNDARY)
 
     substrate = vls.Domain(bounds, boundaryCons, gridDelta)
-    normal = [0.0] * vcs.D
-    origin = [0.0] * vcs.D
-    normal[vcs.D - 1] = 1.0
-    origin[vcs.D - 1] = params["verticalDepth"]
+    normal = [0.0] * D
+    origin = [0.0] * D
+    normal[D - 1] = 1.0
+    origin[D - 1] = params["verticalDepth"]
     vls.MakeGeometry(substrate, vls.Plane(origin, normal)).apply()
 
     # Create the vertical trench
     vertBox = vls.Domain(substrate)
-    minPoint = [0] * vcs.D
-    maxPoint = [0] * vcs.D
-    for i in range(vcs.D - 1):
+    minPoint = [0] * D
+    maxPoint = [0] * D
+    for i in range(D - 1):
         minPoint[i] = -params["verticalWidth"] / 2.0
         maxPoint[i] = params["verticalWidth"] / 2.0
-    maxPoint[vcs.D - 1] = params["verticalDepth"]
+    maxPoint[D - 1] = params["verticalDepth"]
     vls.MakeGeometry(vertBox, vls.Box(minPoint, maxPoint)).apply()
     vls.BooleanOperation(
         substrate, vertBox, vls.BooleanOperationEnum.RELATIVE_COMPLEMENT
@@ -86,12 +91,12 @@ def makeLShape(params: dict):
 
     # Create the horizontal trench
     horiBox = vls.Domain(substrate)
-    minPoint = [0] * vcs.D
-    maxPoint = [params["verticalWidth"] / 2.0] * vcs.D
-    for i in range(vcs.D - 1):
+    minPoint = [0] * D
+    maxPoint = [params["verticalWidth"] / 2.0] * D
+    for i in range(D - 1):
         minPoint[i] = -params["verticalWidth"] / 2.0
-    maxPoint[vcs.D - 1] = params["horizontalHeight"]
-    maxPoint[vcs.D - 2] = -params["verticalWidth"] / 2.0 + params["horizontalWidth"]
+    maxPoint[D - 1] = params["horizontalHeight"]
+    maxPoint[D - 2] = -params["verticalWidth"] / 2.0 + params["horizontalWidth"]
     vls.MakeGeometry(horiBox, vls.Box(minPoint, maxPoint)).apply()
     vls.BooleanOperation(
         substrate, horiBox, vls.BooleanOperationEnum.RELATIVE_COMPLEMENT
@@ -99,8 +104,6 @@ def makeLShape(params: dict):
 
     return substrate
 
-
-import viennals2d as vls
 
 # vcs.Logger.setLogLevel(vcs.LogLevel.INTERMEDIATE)
 params = ReadConfigFile("config.txt")

@@ -8,7 +8,6 @@ namespace viennacs {
 using namespace viennacore;
 
 template <class T> class TracePath {
-private:
   std::unordered_map<int, T> data;
   std::vector<T> gridData;
 

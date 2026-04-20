@@ -204,14 +204,21 @@ private:
     const NumericType dtdx2 = dt / (gridDelta * gridDelta);
 
     // shared
-    const unsigned numThreads = omp_get_max_threads();
+    unsigned numThreads = 1;
+#ifdef _OPENMP
+    numThreads = omp_get_max_threads();
+#endif
     std::vector<NumericType> newFlux(cellType->size(), 0.);
     std::vector<std::vector<NumericType>> reduceFluxes(numThreads);
 
 #pragma omp parallel
     {
       // local
-      auto &reduceFlux = reduceFluxes[omp_get_thread_num()];
+      int p = 0;
+#ifdef _OPENMP
+      p = omp_get_thread_num();
+#endif
+      auto &reduceFlux = reduceFluxes[p];
       reduceFlux.resize(cellType->size(), 0.);
 
 #pragma omp for

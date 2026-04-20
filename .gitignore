@@ -4,6 +4,9 @@ build/
 .codex/
 __pycache__/
 .codex
+.idea/
+cmake-build-*
+__pycache__
 
 # Prerequisites
 *.d
@@ -38,5 +41,5 @@ __pycache__/
 *.out
 *.app
 
-# Example outputs
-*.vtu
+# Output .vt* files
+*.vt*

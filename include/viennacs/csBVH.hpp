@@ -11,7 +11,7 @@ using namespace viennacore;
 template <class T, int D> class BVH {
 private:
   using BVPtrType = SmartPointer<BoundingVolume<T, D>>;
-  using BoundsType = Vec2D<std::array<T, D>>;
+  using BoundsType = std::array<VectorType<T, D>, 2>;
   using CellIdsPtr = std::set<unsigned> *;
 
   unsigned numLayers = 1;
@@ -24,13 +24,11 @@ public:
 
   BVPtrType getTopBV() { return BV; }
 
-  void getLowestBVBounds(const std::array<T, 3> &point) {
+  void getLowestBVBounds(const Vec3D<T> &point) {
     BV->getBoundingVolumeBounds(point);
   }
 
-  CellIdsPtr getCellIds(const std::array<T, 3> &point) {
-    return BV->getCellIds(point);
-  }
+  CellIdsPtr getCellIds(const Vec3D<T> &point) { return BV->getCellIds(point); }
 
   void clearCellIds() { BV->clear(); }
 

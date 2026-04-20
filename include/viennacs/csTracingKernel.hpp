@@ -48,7 +48,7 @@ public:
     assert(rtcGetDeviceError(mDevice) == RTC_ERROR_NONE &&
            "Embree device error");
 
-    const Vec2D<T> meanFreePath = mParticle->getMeanFreePath();
+    const auto meanFreePath = mParticle->getMeanFreePath();
 
     auto myCellSet = cellSet;
 
@@ -88,7 +88,7 @@ public:
 
         auto originAndDirection = mSource.getOriginAndDirection(idx, RngState);
         rayInternal::fillRayPosition(rayHit.ray, originAndDirection[0]);
-        rayInternal::fillRayDirection(rayHit.ray, originAndDirection[1]);
+        rayInternal::fillRayDirection<D>(rayHit.ray, originAndDirection[1]);
 
 #ifdef VIENNARAY_USE_RAY_MASKING
         rayHit.ray.mask = -1;
@@ -170,7 +170,7 @@ public:
             std::vector<VolumeParticle<T>> particleStack;
             std::normal_distribution<T> normalDist{meanFreePath[0],
                                                    meanFreePath[1]};
-            Vec3D<T> hitPoint = {xx, yy, zz};
+            Vec3D<T> hitPoint{xx, yy, zz};
             particleStack.emplace_back(VolumeParticle<T>{
                 hitPoint, rayDir, fillnDirection.first, 0., -1, 0});
 
@@ -211,7 +211,7 @@ public:
 
           // Update ray direction and origin
           rayInternal::fillRayPosition(rayHit.ray, hitPoint);
-          rayInternal::fillRayDirection(rayHit.ray, fillnDirection.second);
+          rayInternal::fillRayDirection<D>(rayHit.ray, fillnDirection.second);
 
         } while (reflect);
       } // end ray tracing for loop

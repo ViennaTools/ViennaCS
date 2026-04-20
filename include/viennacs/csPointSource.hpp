@@ -2,13 +2,13 @@
 
 #include <raySource.hpp>
 
-#include <vcVectorUtil.hpp>
+#include <vcVectorType.hpp>
 
 namespace viennacs {
 
 using namespace viennacore;
 
-template <typename NumericType, int D>
+template <typename NumericType>
 class PointSource : public viennaray::Source<NumericType> {
   const unsigned mNumPoints;
   const Vec3D<NumericType> origin;
@@ -21,7 +21,7 @@ public:
       : origin(passedOrigin), direction(passedDirection),
         mNumPoints(pNumPoints) {}
 
-  Vec2D<Vec3D<NumericType>>
+  std::array<Vec3D<NumericType>, 2>
   getOriginAndDirection(const size_t idx, RNG &rngState) const override {
     return {origin, direction};
   }

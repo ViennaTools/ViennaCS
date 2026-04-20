@@ -5,7 +5,7 @@
 #include <lsDomain.hpp>
 #include <lsToDiskMesh.hpp>
 
-#include <rayGeometry.hpp>
+// #include <rayGeometry.hpp>
 #include <rayReflection.hpp>
 
 #include <vcKDTree.hpp>
@@ -50,13 +50,19 @@ public:
 private:
   void runKernel() {
     // thread local data storage
-    const int numThreads = omp_get_max_threads();
+    unsigned numThreads = 1;
+#ifdef _OPENMP
+    numThreads = omp_get_max_threads();
+#endif
     std::vector<std::vector<NumericType>> threadLocalData(numThreads);
     std::vector<std::vector<unsigned>> threadLocalHitCount(numThreads);
 
 #pragma omp parallel
     {
-      const int threadNum = omp_get_thread_num();
+      int threadNum = 0;
+#ifdef _OPENMP
+      threadNum = omp_get_thread_num();
+#endif
       auto &data = threadLocalData[threadNum];
       data.resize(numCells, 0.);
       auto &hitCount = threadLocalHitCount[threadNum];
