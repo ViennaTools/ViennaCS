@@ -141,6 +141,49 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .def_readwrite("damageLevel", &tables::ImplantRecipe<T>::damageLevel)
       .def_readwrite("entry", &tables::ImplantRecipe<T>::entry);
 
+  py::class_<tables::DamageTableEntry<T>>(module, "DamageTableEntry")
+      .def(py::init<>())
+      .def_readwrite("species", &tables::DamageTableEntry<T>::species)
+      .def_readwrite("material", &tables::DamageTableEntry<T>::material)
+      .def_readwrite("energyKeV", &tables::DamageTableEntry<T>::energyKeV)
+      .def_readwrite("tiltDeg", &tables::DamageTableEntry<T>::tiltDeg)
+      .def_readwrite("rotationDeg", &tables::DamageTableEntry<T>::rotationDeg)
+      .def_readwrite("dosePerCm2", &tables::DamageTableEntry<T>::dosePerCm2)
+      .def_readwrite("screenThickness",
+                     &tables::DamageTableEntry<T>::screenThickness)
+      .def_readwrite("projectedRange",
+                     &tables::DamageTableEntry<T>::projectedRange)
+      .def_readwrite("verticalSigma",
+                     &tables::DamageTableEntry<T>::verticalSigma)
+      .def_readwrite("lambda", &tables::DamageTableEntry<T>::lambda)
+      .def_readwrite("defectsPerIon",
+                     &tables::DamageTableEntry<T>::defectsPerIon)
+      .def_readwrite("lateralMu", &tables::DamageTableEntry<T>::lateralMu)
+      .def_readwrite("lateralSigma", &tables::DamageTableEntry<T>::lateralSigma)
+      .def_readwrite("lateralModel", &tables::DamageTableEntry<T>::lateralModel)
+      .def_readwrite("lateralScale", &tables::DamageTableEntry<T>::lateralScale)
+      .def_readwrite("lateralLv", &tables::DamageTableEntry<T>::lateralLv)
+      .def_readwrite("lateralDeltaSigma",
+                     &tables::DamageTableEntry<T>::lateralDeltaSigma)
+      .def_readwrite("lateralP1", &tables::DamageTableEntry<T>::lateralP1)
+      .def_readwrite("lateralP2", &tables::DamageTableEntry<T>::lateralP2)
+      .def_readwrite("lateralP3", &tables::DamageTableEntry<T>::lateralP3)
+      .def_readwrite("lateralP4", &tables::DamageTableEntry<T>::lateralP4)
+      .def_readwrite("lateralP5", &tables::DamageTableEntry<T>::lateralP5);
+
+  py::class_<tables::DamageRecipe<T>>(module, "DamageRecipe")
+      .def(py::init<>())
+      .def_readwrite("species", &tables::DamageRecipe<T>::species)
+      .def_readwrite("material", &tables::DamageRecipe<T>::material)
+      .def_readwrite("tableFileName", &tables::DamageRecipe<T>::tableFileName)
+      .def_readwrite("useTableLookup", &tables::DamageRecipe<T>::useTableLookup)
+      .def_readwrite("energyKeV", &tables::DamageRecipe<T>::energyKeV)
+      .def_readwrite("tiltDeg", &tables::DamageRecipe<T>::tiltDeg)
+      .def_readwrite("rotationDeg", &tables::DamageRecipe<T>::rotationDeg)
+      .def_readwrite("dosePerCm2", &tables::DamageRecipe<T>::dosePerCm2)
+      .def_readwrite("screenThickness", &tables::DamageRecipe<T>::screenThickness)
+      .def_readwrite("entry", &tables::DamageRecipe<T>::entry);
+
   py::class_<tables::ImplantTable<T>>(module, "ImplantTable")
       .def(py::init<>())
       .def(py::init<const std::string &>())
@@ -152,6 +195,16 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
            py::arg("dosePerCm2") = T(0),
            py::arg("screenThickness") = T(0),
            py::arg("preferredModel") = "auto");
+
+  py::class_<tables::DamageTable<T>>(module, "DamageTable")
+      .def(py::init<>())
+      .def(py::init<const std::string &>())
+      .def("load", &tables::DamageTable<T>::load)
+      .def("getEntries", &tables::DamageTable<T>::getEntries)
+      .def("lookup", &tables::DamageTable<T>::lookup, py::arg("species"),
+           py::arg("material"), py::arg("energyKeV"), py::arg("tiltDeg"),
+           py::arg("rotationDeg"), py::arg("dosePerCm2") = T(0),
+           py::arg("screenThickness") = T(0));
 
   // Submodule for 2D
   auto m2 = module.def_submodule("d2", "2D bindings");

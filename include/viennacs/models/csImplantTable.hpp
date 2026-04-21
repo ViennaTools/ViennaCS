@@ -2,6 +2,7 @@
 
 #include "../csConstants.hpp"
 #include "../csImplantModel.hpp"
+#include "csImplantDamage.hpp"
 #include "csImplantPearson.hpp"
 
 #include <algorithm>
@@ -79,6 +80,48 @@ template <typename NumericType> struct ImplantRecipe {
   NumericType damageLevel = 0;
 
   ImplantTableEntry<NumericType> entry{};
+};
+
+template <typename NumericType> struct DamageTableEntry {
+  std::string species;
+  std::string material;
+  NumericType energyKeV = 0;
+  NumericType tiltDeg = 0;
+  NumericType rotationDeg = 0;
+  NumericType dosePerCm2 = 0;
+  NumericType screenThickness = 0;
+
+  NumericType projectedRange = 0;
+  NumericType verticalSigma = 0;
+  NumericType lambda = 0;
+  NumericType defectsPerIon = 0;
+
+  NumericType lateralMu = 0;
+  NumericType lateralSigma = 0;
+  std::string lateralModel = "taurus";
+  NumericType lateralScale = 1;
+  NumericType lateralLv = 1;
+  NumericType lateralDeltaSigma = 0;
+  NumericType lateralP1 = 0;
+  NumericType lateralP2 = 0;
+  NumericType lateralP3 = 0;
+  NumericType lateralP4 = 0;
+  NumericType lateralP5 = 0;
+};
+
+template <typename NumericType> struct DamageRecipe {
+  std::string species = "B";
+  std::string material = "Si";
+  std::string tableFileName;
+  bool useTableLookup = true;
+
+  NumericType energyKeV = 0;
+  NumericType tiltDeg = 0;
+  NumericType rotationDeg = 0;
+  NumericType dosePerCm2 = 0;
+  NumericType screenThickness = 0;
+
+  DamageTableEntry<NumericType> entry{};
 };
 
 namespace impl {
@@ -376,6 +419,48 @@ buildModelFromEntry(const ImplantTableEntry<NumericType> &entry) {
   }
   return SmartPointer<ImplantPearsonIV<NumericType, D>>::New(
       entry.headParams, makeLateralParams(entry, false));
+}
+
+template <typename NumericType>
+inline DamageTableEntry<NumericType>
+entryFromRecipe(const DamageRecipe<NumericType> &recipe) {
+  auto entry = recipe.entry;
+  entry.species = recipe.species;
+  entry.material = recipe.material;
+  entry.energyKeV = recipe.energyKeV;
+  entry.tiltDeg = recipe.tiltDeg;
+  entry.rotationDeg = recipe.rotationDeg;
+  entry.dosePerCm2 = recipe.dosePerCm2;
+  entry.screenThickness = recipe.screenThickness;
+  return entry;
+}
+
+template <typename NumericType>
+inline LateralStraggleParameters<NumericType>
+makeLateralParams(const DamageTableEntry<NumericType> &entry) {
+  LateralStraggleParameters<NumericType> params;
+  params.model = parseLateralModel<NumericType>(entry.lateralModel,
+                                                LateralStraggleModel::Taurus);
+  params.mu = entry.lateralMu;
+  params.sigma = entry.lateralSigma;
+  params.scale = entry.lateralScale;
+  params.lv = entry.lateralLv;
+  params.deltaSigma = entry.lateralDeltaSigma;
+  params.referenceRange = entry.projectedRange;
+  params.p1 = entry.lateralP1;
+  params.p2 = entry.lateralP2;
+  params.p3 = entry.lateralP3;
+  params.p4 = entry.lateralP4;
+  params.p5 = entry.lateralP5;
+  return params;
+}
+
+template <typename NumericType, int D>
+inline SmartPointer<ImplantModel<NumericType, D>>
+buildModelFromEntry(const DamageTableEntry<NumericType> &entry) {
+  return SmartPointer<ImplantDamageHobler<NumericType, D>>::New(
+      entry.projectedRange, entry.verticalSigma, entry.lambda,
+      entry.defectsPerIon, makeLateralParams(entry));
 }
 
 } // namespace impl
@@ -996,6 +1081,341 @@ private:
   std::vector<ImplantTableEntry<NumericType>> entries_;
 };
 
+template <typename NumericType> class DamageTable {
+public:
+  DamageTable() = default;
+  explicit DamageTable(const std::string &fileName) { load(fileName); }
+
+  void load(const std::string &fileName) {
+    entries_.clear();
+    const auto lowered = impl::lower(fileName);
+    if (lowered.size() >= 4 &&
+        lowered.substr(lowered.size() - 4) == ".csv") {
+      loadCSV(fileName);
+      return;
+    }
+    loadTaurus(fileName);
+  }
+
+  void loadCSV(const std::string &fileName) {
+    entries_.clear();
+    std::ifstream file(fileName);
+    if (!file.is_open()) {
+      throw std::runtime_error("Could not open damage table file: " + fileName);
+    }
+
+    std::string headerLine;
+    while (std::getline(file, headerLine)) {
+      headerLine = impl::trim(headerLine);
+      if (!headerLine.empty() && headerLine[0] != '#')
+        break;
+    }
+    if (headerLine.empty()) {
+      throw std::runtime_error("Damage table file is empty: " + fileName);
+    }
+
+    const auto headers = impl::splitCSVLine(headerLine);
+    std::unordered_map<std::string, size_t> headerIndex;
+    for (size_t i = 0; i < headers.size(); ++i) {
+      headerIndex[headers[i]] = i;
+    }
+
+    std::string line;
+    while (std::getline(file, line)) {
+      line = impl::trim(line);
+      if (line.empty() || line[0] == '#')
+        continue;
+
+      const auto cells = impl::splitCSVLine(line);
+      DamageTableEntry<NumericType> entry;
+      entry.species = impl::parseString(headerIndex, cells, "species");
+      entry.material = impl::parseString(headerIndex, cells, "material");
+      entry.energyKeV =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "energyKeV");
+      entry.tiltDeg =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "tiltDeg");
+      entry.rotationDeg =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "rotationDeg");
+      entry.dosePerCm2 =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "dosePerCm2");
+      entry.screenThickness = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "screenThickness");
+      entry.projectedRange = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "projectedRange");
+      entry.verticalSigma = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "verticalSigma");
+      entry.lambda =
+          impl::parseNumeric<NumericType>(headerIndex, cells, "lambda");
+      entry.defectsPerIon = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "defectsPerIon");
+      entry.lateralMu = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralMu");
+      entry.lateralSigma = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "lateralSigma");
+      entry.lateralModel = impl::parseString(headerIndex, cells,
+                                             "lateralModel", "taurus");
+      entry.lateralScale = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "lateralScale", NumericType(1));
+      entry.lateralLv = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "lateralLv", NumericType(1));
+      entry.lateralDeltaSigma = impl::parseNumeric<NumericType>(
+          headerIndex, cells, "lateralDeltaSigma", NumericType(0));
+      entry.lateralP1 = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralP1");
+      entry.lateralP2 = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralP2");
+      entry.lateralP3 = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralP3");
+      entry.lateralP4 = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralP4");
+      entry.lateralP5 = impl::parseNumeric<NumericType>(headerIndex, cells,
+                                                        "lateralP5");
+
+      if (!entry.species.empty() && !entry.material.empty())
+        entries_.push_back(entry);
+    }
+  }
+
+  void loadTaurus(const std::string &fileName) {
+    entries_.clear();
+
+    std::ifstream file(fileName);
+    if (!file.is_open()) {
+      throw std::runtime_error("Could not open damage table file: " + fileName);
+    }
+
+    const auto fileStem =
+        std::filesystem::path(fileName).filename().string();
+    std::string species;
+    std::string material;
+    if (const auto marker = fileStem.find("_damage_in_");
+        marker != std::string::npos) {
+      species = impl::canonicalSpeciesName(fileStem.substr(0, marker));
+      auto suffix = fileStem.substr(marker + 11);
+      if (const auto tail = suffix.rfind("_standard"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_tsuprem4"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_2012"); tail != std::string::npos)
+        suffix.erase(tail);
+      if (const auto tail = suffix.rfind("_2007"); tail != std::string::npos)
+        suffix.erase(tail);
+      material = impl::canonicalMaterialName(suffix);
+    }
+
+    std::vector<std::string> conditions;
+    std::string line;
+    while (std::getline(file, line)) {
+      line = impl::trim(line);
+      if (line.empty() || impl::isCommentLine(line))
+        continue;
+      const auto words = impl::splitWhitespace(line);
+      if (words.empty())
+        continue;
+      if (impl::lower(words.front()) == "energy") {
+        conditions = words;
+        break;
+      }
+    }
+
+    if (conditions.empty()) {
+      throw std::runtime_error("Could not find Taurus damage header in " +
+                               fileName);
+    }
+
+    std::unordered_map<std::string, size_t> conditionIndex;
+    for (size_t i = 0; i < conditions.size(); ++i) {
+      conditionIndex[impl::lower(conditions[i])] = i;
+    }
+
+    constexpr size_t numMoments = 8;
+    while (std::getline(file, line)) {
+      line = impl::trim(line);
+      if (line.empty() || impl::isCommentLine(line))
+        continue;
+
+      const auto values = impl::parseNumericList<NumericType>(line);
+      if (values.size() < conditions.size() + numMoments)
+        continue;
+
+      DamageTableEntry<NumericType> entry;
+      entry.species = species;
+      entry.material = material;
+
+      const auto getCondition = [&](const std::string &name,
+                                    NumericType defaultValue = NumericType(0)) {
+        const auto it = conditionIndex.find(name);
+        if (it == conditionIndex.end() || it->second >= values.size())
+          return defaultValue;
+        return values[it->second];
+      };
+
+      entry.energyKeV = getCondition("energy");
+      entry.tiltDeg = getCondition("tilt");
+      entry.rotationDeg = getCondition("rotation");
+      entry.dosePerCm2 = getCondition("dose");
+      entry.screenThickness = getCondition("screen") * NumericType(1e3);
+
+      const size_t offset = conditions.size();
+      entry.projectedRange = values[offset + 0] * NumericType(1e3);
+      entry.verticalSigma = values[offset + 1] * NumericType(1e3);
+      entry.lateralSigma = values[offset + 2] * NumericType(1e3);
+      entry.lateralModel = "taurus";
+      entry.lateralDeltaSigma = values[offset + 3];
+      entry.lambda = values[offset + 6] * NumericType(1e3);
+      entry.defectsPerIon = values[offset + 7];
+      entries_.push_back(entry);
+    }
+
+    if (entries_.empty()) {
+      throw std::runtime_error("No Taurus damage entries found in " + fileName);
+    }
+  }
+
+  const std::vector<DamageTableEntry<NumericType>> &getEntries() const {
+    return entries_;
+  }
+
+  DamageTableEntry<NumericType>
+  lookup(const std::string &species, const std::string &material,
+         NumericType energyKeV, NumericType tiltDeg, NumericType rotationDeg,
+         NumericType dosePerCm2 = NumericType(0),
+         NumericType screenThickness = NumericType(0)) const {
+    std::vector<const DamageTableEntry<NumericType> *> candidates;
+    const auto speciesLower = impl::canonicalSpeciesName(species);
+    const auto materialLower = impl::canonicalMaterialName(material);
+
+    for (const auto &entry : entries_) {
+      if (!entry.species.empty() &&
+          impl::canonicalSpeciesName(entry.species) != speciesLower)
+        continue;
+      if (!entry.material.empty() &&
+          impl::canonicalMaterialName(entry.material) != materialLower)
+        continue;
+      candidates.push_back(&entry);
+    }
+
+    if (candidates.empty()) {
+      throw std::runtime_error("No damage table entries found for " + species +
+                               " in " + material + ".");
+    }
+
+    auto restrictToLocalGrid =
+        [](std::vector<const DamageTableEntry<NumericType> *> &entries,
+           NumericType target, auto accessor) {
+          constexpr NumericType eps = NumericType(1e-12);
+          if (entries.size() <= 1)
+            return;
+
+          bool hasExact = false;
+          NumericType lower = -std::numeric_limits<NumericType>::infinity();
+          NumericType upper = std::numeric_limits<NumericType>::infinity();
+          for (const auto *entry : entries) {
+            const auto value = accessor(*entry);
+            if (std::abs(value - target) <= eps) {
+              hasExact = true;
+              lower = target;
+              upper = target;
+              break;
+            }
+            if (value < target && value > lower)
+              lower = value;
+            if (value > target && value < upper)
+              upper = value;
+          }
+
+          std::vector<const DamageTableEntry<NumericType> *> filtered;
+          filtered.reserve(entries.size());
+          for (const auto *entry : entries) {
+            const auto value = accessor(*entry);
+            if (hasExact) {
+              if (std::abs(value - target) <= eps)
+                filtered.push_back(entry);
+              continue;
+            }
+
+            const bool useLower =
+                std::isfinite(lower) && std::abs(value - lower) <= eps;
+            const bool useUpper =
+                std::isfinite(upper) && std::abs(value - upper) <= eps;
+            if (useLower || useUpper)
+              filtered.push_back(entry);
+          }
+
+          if (!filtered.empty())
+            entries = std::move(filtered);
+        };
+
+    restrictToLocalGrid(candidates, energyKeV,
+                        [](const auto &entry) { return entry.energyKeV; });
+    restrictToLocalGrid(candidates, tiltDeg,
+                        [](const auto &entry) { return entry.tiltDeg; });
+    restrictToLocalGrid(candidates, rotationDeg,
+                        [](const auto &entry) { return entry.rotationDeg; });
+    restrictToLocalGrid(candidates, dosePerCm2,
+                        [](const auto &entry) { return entry.dosePerCm2; });
+    restrictToLocalGrid(candidates, screenThickness,
+                        [](const auto &entry) { return entry.screenThickness; });
+
+    if (candidates.size() == 1)
+      return *candidates.front();
+
+    NumericType totalWeight = 0;
+    DamageTableEntry<NumericType> result = *candidates.front();
+    result.projectedRange = 0;
+    result.verticalSigma = 0;
+    result.lateralSigma = 0;
+    result.lateralDeltaSigma = 0;
+    result.lambda = 0;
+    result.defectsPerIon = 0;
+    result.dosePerCm2 = 0;
+    result.screenThickness = 0;
+
+    for (const auto *entry : candidates) {
+      const auto distance =
+          impl::normalizedDistance(entry->energyKeV, energyKeV,
+                                   std::max(energyKeV, NumericType(1))) +
+          impl::normalizedDistance(entry->tiltDeg, tiltDeg, NumericType(10)) +
+          impl::normalizedDistance(entry->rotationDeg, rotationDeg,
+                                   NumericType(45)) +
+          impl::normalizedDistance(entry->dosePerCm2, dosePerCm2,
+                                   std::max(dosePerCm2, NumericType(1e10))) +
+          impl::normalizedDistance(entry->screenThickness, screenThickness,
+                                   NumericType(10));
+
+      if (distance <= NumericType(1e-12))
+        return *entry;
+
+      const auto weight = NumericType(1) / distance;
+      totalWeight += weight;
+      result.projectedRange += weight * entry->projectedRange;
+      result.verticalSigma += weight * entry->verticalSigma;
+      result.lateralSigma += weight * entry->lateralSigma;
+      result.lateralDeltaSigma += weight * entry->lateralDeltaSigma;
+      result.lambda += weight * entry->lambda;
+      result.defectsPerIon += weight * entry->defectsPerIon;
+      result.dosePerCm2 += weight * entry->dosePerCm2;
+      result.screenThickness += weight * entry->screenThickness;
+    }
+
+    if (totalWeight <= NumericType(0))
+      return *candidates.front();
+
+    result.projectedRange /= totalWeight;
+    result.verticalSigma /= totalWeight;
+    result.lateralSigma /= totalWeight;
+    result.lateralDeltaSigma /= totalWeight;
+    result.lambda /= totalWeight;
+    result.defectsPerIon /= totalWeight;
+    result.dosePerCm2 /= totalWeight;
+    result.screenThickness /= totalWeight;
+    return result;
+  }
+
+private:
+  std::vector<DamageTableEntry<NumericType>> entries_;
+};
+
 template <typename NumericType, int D>
 class TableDrivenImplantModel final : public ImplantModel<NumericType, D> {
 public:
@@ -1103,6 +1523,109 @@ private:
   ImplantRecipe<NumericType> recipe_;
   ImplantTable<NumericType> table_;
   ImplantTableEntry<NumericType> selectedEntry_;
+  SmartPointer<ImplantModel<NumericType, D>> model_;
+};
+
+template <typename NumericType, int D>
+class TableDrivenDamageModel final : public ImplantModel<NumericType, D> {
+public:
+  TableDrivenDamageModel(const std::string &fileName,
+                         const std::string &species,
+                         const std::string &material,
+                         NumericType energyKeV, NumericType tiltDeg,
+                         NumericType rotationDeg,
+                         NumericType dosePerCm2 = NumericType(0),
+                         NumericType screenThickness = NumericType(0))
+      : table_(fileName),
+        selectedEntry_(table_.lookup(species, material, energyKeV, tiltDeg,
+                                     rotationDeg, dosePerCm2,
+                                     screenThickness)) {
+    model_ = impl::buildModelFromEntry<NumericType, D>(selectedEntry_);
+  }
+
+  NumericType getDepthProfile(NumericType depth) override {
+    return model_->getDepthProfile(depth);
+  }
+
+  NumericType getLateralProfile(NumericType offset,
+                                NumericType depth) override {
+    return model_->getLateralProfile(offset, depth);
+  }
+
+  NumericType getProfile(NumericType depth, NumericType offset) override {
+    return model_->getProfile(depth, offset);
+  }
+
+  NumericType getMaxDepth() override { return model_->getMaxDepth(); }
+
+  NumericType getMaxLateralRange() override {
+    return model_->getMaxLateralRange();
+  }
+
+  const DamageTableEntry<NumericType> &getSelectedEntry() const {
+    return selectedEntry_;
+  }
+
+private:
+  DamageTable<NumericType> table_;
+  DamageTableEntry<NumericType> selectedEntry_;
+  SmartPointer<ImplantModel<NumericType, D>> model_;
+};
+
+template <typename NumericType, int D>
+class RecipeDrivenDamageModel final : public ImplantModel<NumericType, D> {
+public:
+  RecipeDrivenDamageModel(const DamageRecipe<NumericType> &recipe,
+                          const std::string &defaultTableFileName = "")
+      : recipe_(recipe) {
+    const auto resolvedTableFileName =
+        !recipe.tableFileName.empty() ? recipe.tableFileName : defaultTableFileName;
+
+    if (recipe.useTableLookup) {
+      if (resolvedTableFileName.empty()) {
+        throw std::runtime_error(
+            "RecipeDrivenDamageModel requires a table file for table lookup.");
+      }
+      table_ = DamageTable<NumericType>(resolvedTableFileName);
+      selectedEntry_ = table_.lookup(
+          recipe.species, recipe.material, recipe.energyKeV, recipe.tiltDeg,
+          recipe.rotationDeg, recipe.dosePerCm2, recipe.screenThickness);
+    } else {
+      selectedEntry_ = impl::entryFromRecipe(recipe);
+    }
+
+    model_ = impl::buildModelFromEntry<NumericType, D>(selectedEntry_);
+  }
+
+  NumericType getDepthProfile(NumericType depth) override {
+    return model_->getDepthProfile(depth);
+  }
+
+  NumericType getLateralProfile(NumericType offset,
+                                NumericType depth) override {
+    return model_->getLateralProfile(offset, depth);
+  }
+
+  NumericType getProfile(NumericType depth, NumericType offset) override {
+    return model_->getProfile(depth, offset);
+  }
+
+  NumericType getMaxDepth() override { return model_->getMaxDepth(); }
+
+  NumericType getMaxLateralRange() override {
+    return model_->getMaxLateralRange();
+  }
+
+  const DamageRecipe<NumericType> &getRecipe() const { return recipe_; }
+
+  const DamageTableEntry<NumericType> &getSelectedEntry() const {
+    return selectedEntry_;
+  }
+
+private:
+  DamageRecipe<NumericType> recipe_;
+  DamageTable<NumericType> table_;
+  DamageTableEntry<NumericType> selectedEntry_;
   SmartPointer<ImplantModel<NumericType, D>> model_;
 };
 

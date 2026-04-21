@@ -24,6 +24,7 @@ enum class ImplantDoseControl {
 template <class NumericType, int D> class Implant {
   SmartPointer<DenseCellSet<NumericType, D>> cellSet_;
   SmartPointer<ImplantModel<NumericType, D>> model_;
+  SmartPointer<ImplantModel<NumericType, D>> damageModel_;
   std::vector<int> maskMaterials;
   std::vector<int> screenMaterials;
   NumericType angle_ = NumericType(0);
@@ -32,8 +33,11 @@ template <class NumericType, int D> class Implant {
   ImplantDoseControl doseControl_ = ImplantDoseControl::Off;
   bool writeBeamHits_ = false;
   bool outputConcentrationInCm3_ = false;
+  NumericType damageFactor_ = NumericType(1);
   std::string concentrationLabel_ = "concentration";
   std::string beamHitsLabel_ = "beamHits";
+  std::string damageLabel_ = "Damage";
+  std::string damageLastImpLabel_ = "Damage_LastImp";
 
 public:
   Implant() = default;
@@ -62,6 +66,16 @@ public:
 
   void setBeamHitsLabel(const std::string &label) { beamHitsLabel_ = label; }
 
+  void setDamageLabel(const std::string &label) { damageLabel_ = label; }
+
+  void setDamageLastImpLabel(const std::string &label) {
+    damageLastImpLabel_ = label;
+  }
+
+  void setDamageFactor(const NumericType factor) {
+    damageFactor_ = std::max(factor, NumericType(0));
+  }
+
   void setOutputConcentrationInCm3(const bool enable = true) {
     outputConcentrationInCm3_ = enable;
   }
@@ -69,6 +83,11 @@ public:
   void setImplantModel(
       SmartPointer<ImplantModel<NumericType, D>> passedImplantModel) {
     model_ = passedImplantModel;
+  }
+
+  void setDamageModel(
+      SmartPointer<ImplantModel<NumericType, D>> passedDamageModel) {
+    damageModel_ = passedDamageModel;
   }
 
   template <class... Mats> void setMaskMaterials(Mats... mats) {
@@ -98,9 +117,22 @@ public:
     auto concentration =
         cellSet_->getCellGrid()->getCellData().getScalarData(concentrationLabel_, true);
     if (!concentration)
-      concentration = cellSet_->addScalarData(concentrationLabel_, 0.);
-    auto beamHits = writeBeamHits_ ? cellSet_->addScalarData(beamHitsLabel_, 0.)
-                                   : nullptr;
+      cellSet_->addScalarData(concentrationLabel_, 0.);
+    if (writeBeamHits_)
+      cellSet_->addScalarData(beamHitsLabel_, 0.);
+    std::vector<NumericType> *damage = nullptr;
+    std::vector<NumericType> *damageLastImp = nullptr;
+    if (damageModel_) {
+      damage = cellSet_->getCellGrid()->getCellData().getScalarData(damageLabel_, true);
+      if (!damage)
+        cellSet_->addScalarData(damageLabel_, 0.);
+      cellSet_->addScalarData(damageLastImpLabel_, 0.);
+    }
+    concentration = cellSet_->getScalarData(concentrationLabel_);
+    auto beamHits = writeBeamHits_ ? cellSet_->getScalarData(beamHitsLabel_) : nullptr;
+    damage = damageModel_ ? cellSet_->getScalarData(damageLabel_) : nullptr;
+    damageLastImp =
+        damageModel_ ? cellSet_->getScalarData(damageLastImpLabel_) : nullptr;
     auto material = cellSet_->getScalarData("Material");
 
     const NumericType minX = boundingBox[0][0];
@@ -120,11 +152,19 @@ public:
 
     double radians = angle_ * M_PI / 180;
 
+    const auto maxDepthModel =
+        damageModel_ ? std::max(model_->getMaxDepth(), damageModel_->getMaxDepth())
+                     : model_->getMaxDepth();
+    const auto maxLateralModel =
+        damageModel_
+            ? std::max(model_->getMaxLateralRange(),
+                       damageModel_->getMaxLateralRange())
+            : model_->getMaxLateralRange();
     const auto relevant_Cells =
-        std::max(1, static_cast<int>(std::ceil(model_->getMaxDepth() /
+        std::max(1, static_cast<int>(std::ceil(maxDepthModel /
                                                std::max(gridDelta, NumericType(1e-9)))));
     const auto relevant_lateral_Cells =
-        std::max(1, static_cast<int>(std::ceil(2.0 * model_->getMaxLateralRange() /
+        std::max(1, static_cast<int>(std::ceil(2.0 * maxLateralModel /
                                                (std::max(static_cast<NumericType>(std::abs(std::cos(radians))), NumericType(0.01)) * std::max(gridDelta, NumericType(1e-9))))));
     const std::unordered_set<int> maskMaterialSet(maskMaterials.begin(),
                                                   maskMaterials.end());
@@ -229,8 +269,12 @@ public:
                     if (index != -1) {
                       const auto contribution =
                           doseWeight * model_->getProfile(depth, lateralDisplacement);
-                      (*concentration)[index] +=
-                          contribution;
+                      (*concentration)[index] += contribution;
+                      if (damageLastImp != nullptr) {
+                        (*damageLastImp)[index] +=
+                            doseWeight *
+                            damageModel_->getProfile(depth, lateralDisplacement);
+                      }
                       if (beamHits != nullptr && contribution > NumericType(0)) {
                     if (lateralDisplacement <= gridDelta) {
                       (*beamHits)[index] = NumericType(1);
@@ -320,8 +364,12 @@ public:
                 if (index != -1) {
                   const auto contribution =
                       doseWeight * model_->getProfile(depth, lateralDisplacement);
-                  (*concentration)[index] +=
-                      contribution;
+                  (*concentration)[index] += contribution;
+                  if (damageLastImp != nullptr) {
+                    (*damageLastImp)[index] +=
+                        doseWeight *
+                        damageModel_->getProfile(depth, lateralDisplacement);
+                  }
                   if (beamHits != nullptr && contribution > NumericType(0)) {
                     if (lateralDisplacement <= gridDelta) {
                       (*beamHits)[index] = NumericType(1);
@@ -342,6 +390,16 @@ public:
                                   3);
       for (auto &value : *concentration)
         value *= scale;
+      if (damageLastImp != nullptr) {
+        for (auto &value : *damageLastImp)
+          value *= scale;
+      }
+    }
+
+    if (damageLastImp != nullptr && damage != nullptr) {
+      for (size_t i = 0; i < damage->size(); ++i) {
+        (*damage)[i] += damageFactor_ * (*damageLastImp)[i];
+      }
     }
   }
 };

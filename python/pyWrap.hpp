@@ -32,6 +32,7 @@
 #include <csSegmentCells.hpp>
 #include <csVersion.hpp>
 #include <models/csImplantGaussian.hpp>
+#include <models/csImplantDamage.hpp>
 #include <models/csImplantPearson.hpp>
 #include <models/csImplantTable.hpp>
 
@@ -287,6 +288,18 @@ template <int D> void bindAPI(py::module &module) {
            py::arg("headFraction"), py::arg("headLateralParams"),
            py::arg("tailLateralParams"));
 
+  py::class_<ImplantDamageHobler<T, D>, ImplantModel<T, D>,
+             SmartPointer<ImplantDamageHobler<T, D>>>(
+      module, "ImplantDamageHobler")
+      .def(py::init<T, T, T, T, T, T>(), py::arg("projectedRange"),
+           py::arg("verticalSigma"), py::arg("lambda"),
+           py::arg("defectsPerIon"), py::arg("lateralSigma"),
+           py::arg("lateralDeltaSigma") = T(0))
+      .def(py::init<T, T, T, T, const LateralStraggleParameters<T> &>(),
+           py::arg("projectedRange"), py::arg("verticalSigma"),
+           py::arg("lambda"), py::arg("defectsPerIon"),
+           py::arg("lateralParams"));
+
   py::class_<tables::TableDrivenImplantModel<T, D>, ImplantModel<T, D>,
              SmartPointer<tables::TableDrivenImplantModel<T, D>>>(
       module, "TableDrivenImplantModel")
@@ -311,6 +324,27 @@ template <int D> void bindAPI(py::module &module) {
       .def("getSelectedEntry",
            &tables::RecipeDrivenImplantModel<T, D>::getSelectedEntry);
 
+  py::class_<tables::TableDrivenDamageModel<T, D>, ImplantModel<T, D>,
+             SmartPointer<tables::TableDrivenDamageModel<T, D>>>(
+      module, "TableDrivenDamageModel")
+      .def(py::init<const std::string &, const std::string &,
+                    const std::string &, T, T, T, T, T>(),
+           py::arg("fileName"), py::arg("species"), py::arg("material"),
+           py::arg("energyKeV"), py::arg("tiltDeg"), py::arg("rotationDeg"),
+           py::arg("dosePerCm2") = T(0),
+           py::arg("screenThickness") = T(0))
+      .def("getSelectedEntry",
+           &tables::TableDrivenDamageModel<T, D>::getSelectedEntry);
+
+  py::class_<tables::RecipeDrivenDamageModel<T, D>, ImplantModel<T, D>,
+             SmartPointer<tables::RecipeDrivenDamageModel<T, D>>>(
+      module, "RecipeDrivenDamageModel")
+      .def(py::init<const tables::DamageRecipe<T> &, const std::string &>(),
+           py::arg("recipe"), py::arg("defaultTableFileName") = "")
+      .def("getRecipe", &tables::RecipeDrivenDamageModel<T, D>::getRecipe)
+      .def("getSelectedEntry",
+           &tables::RecipeDrivenDamageModel<T, D>::getSelectedEntry);
+
   py::class_<Implant<T, D>>(module, "Implant")
       .def(py::init<>())
       .def("setCellSet", &Implant<T, D>::setCellSet)
@@ -322,10 +356,14 @@ template <int D> void bindAPI(py::module &module) {
            py::arg("enable") = true)
       .def("setConcentrationLabel", &Implant<T, D>::setConcentrationLabel)
       .def("setBeamHitsLabel", &Implant<T, D>::setBeamHitsLabel)
+      .def("setDamageLabel", &Implant<T, D>::setDamageLabel)
+      .def("setDamageLastImpLabel", &Implant<T, D>::setDamageLastImpLabel)
+      .def("setDamageFactor", &Implant<T, D>::setDamageFactor)
       .def("setOutputConcentrationInCm3",
            &Implant<T, D>::setOutputConcentrationInCm3,
            py::arg("enable") = true)
       .def("setImplantModel", &Implant<T, D>::setImplantModel)
+      .def("setDamageModel", &Implant<T, D>::setDamageModel)
       .def(
           "setMaskMaterials",
           [](Implant<T, D> &implant, const std::vector<int> &materials) {

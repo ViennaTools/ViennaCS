@@ -228,9 +228,61 @@ def main() -> int:
     if recipe.useTableLookup:
         print(f"Using implant table defaults from {recipe.tableFileName}")
 
+    damage_recipe = _vcs.DamageRecipe()
+    damage_recipe.species = species
+    damage_recipe.material = material
+    damage_recipe.energyKeV = energy_kev
+    damage_recipe.tiltDeg = angle
+    damage_recipe.rotationDeg = rotation_deg
+    damage_recipe.dosePerCm2 = implant_dose_cm2
+    damage_recipe.screenThickness = screen_thickness
+
+    default_damage_table = table_file
+    if (
+        default_damage_table.exists()
+        and "_in_" in default_damage_table.name
+        and "_damage_in_" not in default_damage_table.name
+    ):
+        candidate_name = default_damage_table.name.replace("_in_", "_damage_in_", 1)
+        candidate = default_damage_table.with_name(candidate_name)
+        if candidate.exists():
+            default_damage_table = candidate
+
+    damage_table_file = params.get("damageTablePath", str(default_damage_table))
+    damage_table_file = Path(str(damage_table_file))
+    if not damage_table_file.is_absolute():
+        candidate = (config_dir / damage_table_file).resolve()
+        if candidate.exists():
+            damage_table_file = candidate
+    damage_recipe.tableFileName = str(damage_table_file)
+    damage_recipe.useTableLookup = "damageProjectedRange" not in params
+
+    if not damage_recipe.useTableLookup:
+        damage_entry = damage_recipe.entry
+        damage_entry.projectedRange = params.get("damageProjectedRange", 30.0)
+        damage_entry.verticalSigma = params.get("damageVerticalSigma", 10.0)
+        setattr(damage_entry, "lambda", params.get("damageLambda", 20.0))
+        damage_entry.defectsPerIon = params.get("damageDefectsPerIon", 100.0)
+        damage_entry.lateralMu = params.get("damageLateralMu", 0.0)
+        damage_entry.lateralSigma = params.get("damageLateralSigma", 10.0)
+        damage_entry.lateralModel = str(params.get("damageLateralModel", "taurus"))
+        damage_entry.lateralScale = params.get("damageLateralScale", 1.0)
+        damage_entry.lateralLv = params.get("damageLateralLv", 1.0)
+        damage_entry.lateralDeltaSigma = params.get("damageLateralDeltaSigma", 0.0)
+        damage_entry.lateralP1 = params.get("damageLateralP1", 0.0)
+        damage_entry.lateralP2 = params.get("damageLateralP2", 0.0)
+        damage_entry.lateralP3 = params.get("damageLateralP3", 0.0)
+        damage_entry.lateralP4 = params.get("damageLateralP4", 0.0)
+        damage_entry.lateralP5 = params.get("damageLateralP5", 0.0)
+
+    damage_model = vcs.RecipeDrivenDamageModel(damage_recipe)
+    if damage_recipe.useTableLookup:
+        print(f"Using damage table defaults from {damage_recipe.tableFileName}")
+
     implant = vcs.Implant()
     implant.setCellSet(cell_set)
     implant.setImplantModel(model)
+    implant.setDamageModel(damage_model)
     implant.setImplantAngle(angle)
     if "_vcs" in globals() and hasattr(_vcs, "ImplantDoseControl"):
         dose_modes = {
@@ -249,6 +301,8 @@ def main() -> int:
         implant.enableBeamHits(True)
     if hasattr(implant, "setOutputConcentrationInCm3"):
         implant.setOutputConcentrationInCm3(True)
+    if hasattr(implant, "setDamageFactor"):
+        implant.setDamageFactor(params.get("damageFactor", 1.0))
     implant.setMaskMaterials([2])
     if oxide_thickness > 0.0 and hasattr(implant, "setScreenMaterials"):
         implant.setScreenMaterials([3])
