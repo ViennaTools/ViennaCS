@@ -24,6 +24,7 @@
 
 // all header files which define API functions
 #include <csAtomicLayerProcess.hpp>
+#include <csAnneal.hpp>
 #include <csConstants.hpp>
 #include <csDenseCellSet.hpp>
 #include <csImplant.hpp>
@@ -465,4 +466,39 @@ template <int D> void bindAPI(py::module &module) {
           py::arg("materials"),
           "Set the material IDs to be treated as screen/cap materials.")
       .def("apply", &Implant<T, D>::apply);
+
+  py::class_<Anneal<T, D>>(module, "Anneal")
+      .def(py::init<>())
+      .def("setCellSet", &Anneal<T, D>::setCellSet)
+      .def("setSpeciesLabel", &Anneal<T, D>::setSpeciesLabel)
+      .def("setMaterialLabel", &Anneal<T, D>::setMaterialLabel)
+      .def("setDuration", &Anneal<T, D>::setDuration)
+      .def("setTimeStep", &Anneal<T, D>::setTimeStep)
+      .def("setStabilityFactor", &Anneal<T, D>::setStabilityFactor)
+      .def("setClampNonNegative", &Anneal<T, D>::setClampNonNegative,
+           py::arg("enable") = true)
+      .def("setMode", &Anneal<T, D>::setMode)
+      .def("setImplicitSolverOptions", &Anneal<T, D>::setImplicitSolverOptions)
+      .def("setDiffusionCoefficient", &Anneal<T, D>::setDiffusionCoefficient)
+      .def("setArrheniusParameters", &Anneal<T, D>::setArrheniusParameters)
+      .def("setTemperature", &Anneal<T, D>::setTemperature)
+      .def("clearTemperatureSchedule", &Anneal<T, D>::clearTemperatureSchedule)
+      .def("addIsothermalStep", &Anneal<T, D>::addIsothermalStep)
+      .def("addRampStep", &Anneal<T, D>::addRampStep)
+      .def("setTemperatureRamp", &Anneal<T, D>::setTemperatureRamp)
+      .def("setDiffusionMaterials", &Anneal<T, D>::setDiffusionMaterials)
+      .def("setBlockingMaterials", &Anneal<T, D>::setBlockingMaterials)
+      .def("enableDefectCoupling", &Anneal<T, D>::enableDefectCoupling,
+           py::arg("enable") = true)
+      .def("setDamageLabels", &Anneal<T, D>::setDamageLabels)
+      .def("setDefectLabels", &Anneal<T, D>::setDefectLabels)
+      .def("setDefectSourceWeights", &Anneal<T, D>::setDefectSourceWeights)
+      .def("setDefectPartition", &Anneal<T, D>::setDefectPartition)
+      .def("setDefectDiffusivities", &Anneal<T, D>::setDefectDiffusivities)
+      .def("setDefectReactionRates", &Anneal<T, D>::setDefectReactionRates)
+      .def("setDefectEnhancedDiffusion",
+           &Anneal<T, D>::setDefectEnhancedDiffusion)
+      .def("getEffectiveDiffusionCoefficient",
+           &Anneal<T, D>::getEffectiveDiffusionCoefficient)
+      .def("apply", &Anneal<T, D>::apply);
 }

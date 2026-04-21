@@ -8,6 +8,7 @@ __pycache__/
 cmake-build-*
 __pycache__
 ImplData/
+AnnealData/
 
 # Prerequisites
 *.d

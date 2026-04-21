@@ -42,17 +42,31 @@ def read_config_file(file_name: str) -> dict:
     return params
 
 
+def parse_float_list(value) -> list[float]:
+    if value is None:
+        return []
+    if isinstance(value, (float, int)):
+        return [float(value)]
+    if isinstance(value, str):
+        return [
+            float(tok.strip())
+            for tok in value.split(",")
+            if tok.strip()
+        ]
+    return [float(v) for v in value]
+
+
 def make_bounds(
     x_extent: float,
     top_space: float,
-    implant_depth: float,
+    substrate_depth: float,
     mask_height: float,
     oxide_thickness: float,
 ):
     return [
         -0.5 * x_extent,
         0.5 * x_extent,
-        -implant_depth,
+        -substrate_depth,
         top_space + oxide_thickness + mask_height,
     ]
 
@@ -86,20 +100,20 @@ def add_level_set(level_sets, material_map, level_set, material_id: int, wrap_lo
 def make_structure(
     x_extent: float,
     top_space: float,
-    implant_depth: float,
+    substrate_depth: float,
     opening_width: float,
     mask_height: float,
     oxide_thickness: float,
     grid_delta: float,
 ):
     bounds = make_bounds(
-        x_extent, top_space, implant_depth, mask_height, oxide_thickness
+        x_extent, top_space, substrate_depth, mask_height, oxide_thickness
     )
     material_map = MaterialMap()
     level_sets = []
 
     substrate_bottom = make_domain(bounds, grid_delta)
-    make_plane(substrate_bottom, -implant_depth)
+    make_plane(substrate_bottom, -substrate_depth)
     add_level_set(level_sets, material_map, substrate_bottom, 1)
 
     substrate_top = make_domain(bounds, grid_delta)
@@ -148,12 +162,11 @@ def main() -> int:
     grid_delta = params.get("gridDelta", 1.0)
     x_extent = params.get("xExtent", 40.0)
     top_space = params.get("topSpace", 6.0)
-    implant_depth = params.get("implantDepth", 12.0)
+    substrate_depth = params.get("substrateDepth", 12.0)
     opening_width = params.get("openingWidth", 8.0)
     mask_height = params.get("maskHeight", 4.0)
     oxide_thickness = params.get("oxideThickness", 0.0)
     angle = params.get("angle", 7.0)
-    beam_spacing = params.get("beamSpacing", grid_delta)
     implant_dose_cm2 = params.get("doseCm2", 1.0e15)
     substrate_type = str(params.get("substrateType", "amorphous")).strip().lower()
     species = str(params.get("species", "B"))
@@ -177,7 +190,7 @@ def main() -> int:
     structure = make_structure(
         x_extent,
         top_space,
-        implant_depth,
+        substrate_depth,
         opening_width,
         mask_height,
         oxide_thickness,
@@ -280,9 +293,12 @@ def main() -> int:
         print(f"Using damage table defaults from {damage_recipe.tableFileName}")
 
     implant = vcs.Implant()
+    implant_species_label = str(params.get("implantSpeciesLabel", "concentration_annealed"))
     implant.setCellSet(cell_set)
     implant.setImplantModel(model)
     implant.setDamageModel(damage_model)
+    if hasattr(implant, "setConcentrationLabel"):
+        implant.setConcentrationLabel(implant_species_label)
     implant.setImplantAngle(angle)
     if "_vcs" in globals() and hasattr(_vcs, "ImplantDoseControl"):
         dose_modes = {
@@ -308,11 +324,117 @@ def main() -> int:
         implant.setScreenMaterials([3])
     implant.apply()
 
-    if abs(beam_spacing - grid_delta) > 1e-9:
-        print(
-            f"Note: ViennaCS core Implant uses gridDelta={grid_delta} as the beam spacing. "
-            f"The config value beamSpacing={beam_spacing} is currently not used by the core implant."
-        )
+    # Preserve the as-implanted profile before any anneal step.
+    as_implanted = list(cell_set.getScalarData(implant_species_label))
+    cell_set.addScalarData("concentration_as_implanted", 0.0)
+    cell_set.setScalarData("concentration_as_implanted", as_implanted)
+
+    anneal_step_durations = parse_float_list(params.get("annealStepDurations"))
+    anneal_duration = params.get(
+        "annealDuration",
+        sum(anneal_step_durations) if anneal_step_durations else 0.0,
+    )
+    if (anneal_duration > 0.0 or anneal_step_durations) and hasattr(vcs, "Anneal"):
+        anneal = vcs.Anneal()
+        anneal.setCellSet(cell_set)
+        anneal.setSpeciesLabel(str(params.get("annealSpeciesLabel", implant_species_label)))
+        anneal.setDuration(anneal_duration)
+        anneal_mode = str(params.get("annealMode", "explicit")).strip().lower()
+        if hasattr(_vcs, "AnnealMode"):
+            if anneal_mode == "implicit":
+                anneal.setMode(_vcs.AnnealMode.Implicit)
+                if "annealImplicitMaxIterations" in params or "annealImplicitTolerance" in params:
+                    anneal.setImplicitSolverOptions(
+                        int(params.get("annealImplicitMaxIterations", 400)),
+                        params.get("annealImplicitTolerance", 1.0e-6),
+                    )
+            else:
+                anneal.setMode(_vcs.AnnealMode.Explicit)
+        if "annealTimeStep" in params:
+            anneal.setTimeStep(params.get("annealTimeStep"))
+        if "annealStabilityFactor" in params:
+            anneal.setStabilityFactor(params.get("annealStabilityFactor"))
+
+        if "annealDiffusionCoefficient" in params:
+            anneal.setDiffusionCoefficient(params.get("annealDiffusionCoefficient"))
+        elif "annealD0" in params and "annealEa" in params:
+            anneal.setArrheniusParameters(params.get("annealD0"), params.get("annealEa"))
+            anneal.setTemperature(params.get("annealTemperature", 1273.15))
+        else:
+            print("Anneal requested but no diffusion model parameters found; skipping anneal.")
+            anneal_duration = 0.0
+
+        if anneal_duration > 0.0 or anneal_step_durations:
+            step_durations = anneal_step_durations
+            step_temperatures = parse_float_list(params.get("annealTemperatures"))
+            if not step_temperatures:
+                step_temperatures = parse_float_list(params.get("annealRampTemperatures"))
+
+            if step_durations and hasattr(anneal, "clearTemperatureSchedule"):
+                anneal.clearTemperatureSchedule()
+                if step_temperatures and len(step_temperatures) == len(step_durations) + 1:
+                    for i, step_duration in enumerate(step_durations):
+                        anneal.addRampStep(
+                            step_duration,
+                            step_temperatures[i],
+                            step_temperatures[i + 1],
+                        )
+                    print(
+                        f"Using {len(step_durations)}-step temperature ramp anneal schedule."
+                    )
+                elif step_temperatures and len(step_temperatures) == len(step_durations):
+                    for step_duration, temp in zip(step_durations, step_temperatures):
+                        anneal.addIsothermalStep(step_duration, temp)
+                    print(
+                        f"Using {len(step_durations)}-step isothermal anneal schedule."
+                    )
+                else:
+                    fallback_temp = params.get("annealTemperature", 1273.15)
+                    for step_duration in step_durations:
+                        anneal.addIsothermalStep(step_duration, fallback_temp)
+                    print(
+                        "Using multi-step anneal schedule with shared annealTemperature."
+                    )
+
+            anneal.setDiffusionMaterials([1])
+            anneal.setBlockingMaterials([2])
+            if params.get("annealDefectCoupling", 0.0) > 0.0:
+                anneal.enableDefectCoupling(True)
+                anneal.setDamageLabels(
+                    str(params.get("annealDamageLabel", "Damage")),
+                    str(params.get("annealDamageLastImpLabel", "Damage_LastImp")),
+                )
+                anneal.setDefectLabels(
+                    str(params.get("annealInterstitialLabel", "Interstitial")),
+                    str(params.get("annealVacancyLabel", "Vacancy")),
+                )
+                anneal.setDefectSourceWeights(
+                    params.get("annealDefectFromDamageHistoryWeight", 0.0),
+                    params.get("annealDefectFromDamageLastImpWeight", 1.0),
+                )
+                anneal.setDefectPartition(
+                    params.get("annealDefectToInterstitial", 0.5),
+                    params.get("annealDefectToVacancy", 0.5),
+                )
+                anneal.setDefectDiffusivities(
+                    params.get("annealInterstitialDiffusivity", 0.0),
+                    params.get("annealVacancyDiffusivity", 0.0),
+                )
+                anneal.setDefectReactionRates(
+                    params.get("annealDefectRecombinationRate", 0.0),
+                    params.get("annealInterstitialSinkRate", 0.0),
+                    params.get("annealVacancySinkRate", 0.0),
+                )
+                anneal.setDefectEnhancedDiffusion(
+                    params.get("annealTEDCoefficient", 0.0),
+                    params.get("annealTEDNormalization", 1.0e20),
+                )
+            anneal.apply()
+            print("Anneal step completed.")
+
+    # Store annealed profile explicitly as a separate scalar.
+    annealed = list(cell_set.getScalarData(implant_species_label))
+    cell_set.setScalarData("concentration_annealed", annealed)
 
     cell_set.writeVTU("final.vtu")
     print("Wrote initial.vtu and final.vtu")

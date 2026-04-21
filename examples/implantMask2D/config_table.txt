@@ -1,7 +1,7 @@
 gridDelta=0.25
 xExtent=100.0
 topSpace=15.0
-implantDepth=100.0
+substrateDepth=100.0
 
 openingWidth=15.0
 maskHeight=10.0
@@ -14,7 +14,6 @@ material=Si
 energyKeV=10.0
 rotationDeg=0.0
 angle=7.0
-beamSpacing=0.25
 doseCm2=1.0e15
 doseControl=WaferDose
 substrateType=crystalline
@@ -25,3 +24,34 @@ tablePath=../../data/ImplData/Taurus/boron_in_silicon_standard
 # Keep the preferred lateral formulation explicit at the recipe level.
 # The actual calibrated values come from the implant table entry.
 preferredModel=DualPearsonIV
+
+# Optional anneal step (finite-difference in ViennaCS core)
+# annealDuration=10.0
+# annealDiffusionCoefficient=0.05
+annealMode=implicit
+# annealImplicitMaxIterations=500
+# annealImplicitTolerance=1e-6
+# Or Arrhenius form:
+annealD0=1.0e4
+annealEa=3.46
+# annealTemperature=1273.15
+# Multi-step schedules (times in s, temperatures in K):
+annealStepDurations=5.0,10.0,20.0
+annealTemperatures=1173.15,1273.15,1373.15
+# Ramp schedule variant (N durations + N+1 temperatures):
+# annealStepDurations=5.0,10.0
+# annealTemperatures=1073.15,1273.15,1373.15
+#
+# Optional defect-coupled anneal (I/V sourced from Damage and Damage_LastImp)
+annealDefectCoupling=1
+annealDefectFromDamageHistoryWeight=0.0
+annealDefectFromDamageLastImpWeight=1.0
+annealDefectToInterstitial=0.05
+annealDefectToVacancy=0.05
+annealInterstitialDiffusivity=0.02
+annealVacancyDiffusivity=0.01
+annealDefectRecombinationRate=1e-25
+annealInterstitialSinkRate=1e-4
+annealVacancySinkRate=1e-4
+annealTEDCoefficient=0.5
+annealTEDNormalization=1e20

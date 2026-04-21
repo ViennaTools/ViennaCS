@@ -40,6 +40,10 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
       .value("WaferDose", ImplantDoseControl::WaferDose)
       .value("BeamDose", ImplantDoseControl::BeamDose);
 
+  py::enum_<AnnealMode>(module, "AnnealMode")
+      .value("Explicit", AnnealMode::Explicit)
+      .value("Implicit", AnnealMode::Implicit);
+
   py::class_<LateralStraggleParameters<T>>(module, "LateralStraggleParameters")
       .def(py::init<>())
       .def_readwrite("model", &LateralStraggleParameters<T>::model)

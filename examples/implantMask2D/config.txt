@@ -1,7 +1,7 @@
 gridDelta=0.25
 xExtent=100.0
 topSpace=15.0
-implantDepth=100.0
+substrateDepth=100.0
 
 openingWidth=15.0
 maskHeight=10.0
@@ -13,7 +13,6 @@ material=Si
 energyKeV=10.0
 rotationDeg=0.0
 angle=7.0
-beamSpacing=0.25
 doseCm2=1.0e15
 doseControl=WaferDose
 substrateType=crystalline
@@ -32,8 +31,6 @@ skewness=1.15
 kurtosis=6.2
 lateralSigma=5.0
 lateralMu=0.0
-headLateralModel=taurus
-headLateralDeltaSigma=0.18
 
 # Optional crystalline-Si dual-Pearson tail. Set substrateType=amorphous to disable.
 # These are representative heuristic values for B, 10 keV, Si(100), 7 degree tilt.
@@ -44,5 +41,3 @@ tailSkewness=0.35
 tailKurtosis=4.0
 tailLateralSigma=6.0
 tailLateralMu=0.0
-tailLateralModel=taurus
-tailLateralDeltaSigma=0.38
