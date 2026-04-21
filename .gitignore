@@ -7,8 +7,8 @@ __pycache__/
 .idea/
 cmake-build-*
 __pycache__
-ImplData/
-AnnealData/
+data/
+sprocess_ug.pdf
 
 # Prerequisites
 *.d

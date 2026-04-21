@@ -129,6 +129,8 @@ public:
     defectCouplingEnabled_ = enable;
   }
 
+  void resetDefectInitialization() { defectFieldsInitialized_ = false; }
+
   void setDamageLabels(const std::string &damageLabel,
                        const std::string &damageLastImpLabel) {
     damageLabel_ = damageLabel;
@@ -165,6 +167,17 @@ public:
     recombinationRate_ = std::max(recombinationRate, NumericType(0));
     interstitialSinkRate_ = std::max(interstitialSinkRate, NumericType(0));
     vacancySinkRate_ = std::max(vacancySinkRate, NumericType(0));
+  }
+
+  void enableDefectEquilibrium(const bool enable = true) {
+    defectEquilibriumEnabled_ = enable;
+  }
+
+  void setDefectEquilibrium(const NumericType interstitialEquilibrium,
+                            const NumericType vacancyEquilibrium) {
+    interstitialEquilibrium_ =
+        std::max(interstitialEquilibrium, NumericType(0));
+    vacancyEquilibrium_ = std::max(vacancyEquilibrium, NumericType(0));
   }
 
   void setDefectEnhancedDiffusion(const NumericType tedCoefficient,
@@ -255,15 +268,31 @@ public:
     std::vector<NumericType> *vacancy = nullptr;
     std::vector<NumericType> *cluster = nullptr;
     if (defectCouplingEnabled_) {
-      cellSet_->addScalarData(interstitialLabel_, NumericType(0));
-      cellSet_->addScalarData(vacancyLabel_, NumericType(0));
-      if (defectClusteringEnabled_) {
+      auto *cellData = &cellSet_->getCellGrid()->getCellData();
+      const auto hasInterstitial =
+          (cellData->getScalarData(interstitialLabel_, true) != nullptr);
+      const auto hasVacancy =
+          (cellData->getScalarData(vacancyLabel_, true) != nullptr);
+      const auto hasCluster =
+          (!defectClusteringEnabled_ ||
+           cellData->getScalarData(clusterLabel_, true) != nullptr);
+
+      if (!hasInterstitial) {
+        cellSet_->addScalarData(interstitialLabel_, NumericType(0));
+      }
+      if (!hasVacancy) {
+        cellSet_->addScalarData(vacancyLabel_, NumericType(0));
+      }
+      if (defectClusteringEnabled_ && !hasCluster) {
         cellSet_->addScalarData(clusterLabel_, NumericType(0));
       }
+
+      // Retrieve pointers only after all potential addScalarData() calls.
       interstitial = cellSet_->getScalarData(interstitialLabel_);
       vacancy = cellSet_->getScalarData(vacancyLabel_);
-      cluster = defectClusteringEnabled_ ? cellSet_->getScalarData(clusterLabel_)
-                                         : nullptr;
+      cluster =
+          defectClusteringEnabled_ ? cellSet_->getScalarData(clusterLabel_) : nullptr;
+
       concentration = cellSet_->getScalarData(speciesLabel_);
       materials = cellSet_->getScalarData(materialLabel_);
       if (!interstitial || !vacancy || !concentration || !materials ||
@@ -292,7 +321,7 @@ public:
         interstitial = nullptr;
         vacancy = nullptr;
         cluster = nullptr;
-      } else {
+      } else if (!defectFieldsInitialized_) {
 #pragma omp parallel for
         for (int i = 0; i < static_cast<int>(interstitial->size()); ++i) {
           const auto source =
@@ -305,9 +334,11 @@ public:
             const auto trapped =
                 clusterInitFraction_ * std::max((*interstitial)[i], NumericType(0));
             (*cluster)[i] = trapped;
-            (*interstitial)[i] = std::max((*interstitial)[i] - trapped, NumericType(0));
+            (*interstitial)[i] =
+                std::max((*interstitial)[i] - trapped, NumericType(0));
           }
         }
+        defectFieldsInitialized_ = true;
       }
     }
 
@@ -367,9 +398,18 @@ public:
           for (int i = 0; i < static_cast<int>(interstitial->size()); ++i) {
             const auto I = (*interstitial)[i];
             const auto V = (*vacancy)[i];
-            const auto recombination = recombinationRate_ * I * V;
-            auto newI = I - dt * (recombination + interstitialSinkRate_ * I);
-            auto newV = V - dt * (recombination + vacancySinkRate_ * V);
+            const auto Ieq =
+                defectEquilibriumEnabled_ ? interstitialEquilibrium_ : NumericType(0);
+            const auto Veq =
+                defectEquilibriumEnabled_ ? vacancyEquilibrium_ : NumericType(0);
+            const auto recombination =
+                recombinationRate_ * (I * V - Ieq * Veq);
+            const auto sinkI =
+                interstitialSinkRate_ * (I - (defectEquilibriumEnabled_ ? Ieq : NumericType(0)));
+            const auto sinkV =
+                vacancySinkRate_ * (V - (defectEquilibriumEnabled_ ? Veq : NumericType(0)));
+            auto newI = I - dt * (recombination + sinkI);
+            auto newV = V - dt * (recombination + sinkV);
             if (cluster != nullptr) {
               const auto C = (*cluster)[i];
               const auto capture = dt * (ikfi_ * std::max(newI, NumericType(0)) +
@@ -564,6 +604,7 @@ private:
   std::vector<int> blockingMaterials_;
 
   bool defectCouplingEnabled_ = false;
+  bool defectFieldsInitialized_ = false;
   std::string damageLabel_ = "Damage";
   std::string damageLastImpLabel_ = "Damage_LastImp";
   std::string interstitialLabel_ = "Interstitial";
@@ -577,6 +618,9 @@ private:
   NumericType recombinationRate_ = NumericType(0);
   NumericType interstitialSinkRate_ = NumericType(0);
   NumericType vacancySinkRate_ = NumericType(0);
+  bool defectEquilibriumEnabled_ = false;
+  NumericType interstitialEquilibrium_ = NumericType(0);
+  NumericType vacancyEquilibrium_ = NumericType(0);
   NumericType tedCoefficient_ = NumericType(0);
   NumericType tedNormalization_ = NumericType(1e20);
   bool defectClusteringEnabled_ = false;

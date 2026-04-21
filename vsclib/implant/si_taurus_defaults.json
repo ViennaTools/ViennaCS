@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "1.0",
+  "description": "ViennaCS internal implant lookup defaults for Si using internal table copies in vsclib/implant/tables.",
+  "entries": [
+    {
+      "id": "B_Si_crystalline_standard",
+      "species": "B",
+      "material": "Si",
+      "substrateTypes": ["crystalline"],
+      "preferredModel": "DualPearsonIV",
+      "tableFile": "vsclib/implant/tables/boron_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/boron_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "B_Si_amorphous_standard",
+      "species": "B",
+      "material": "Si",
+      "substrateTypes": ["amorphous"],
+      "preferredModel": "PearsonIV",
+      "tableFile": "vsclib/implant/tables/boron_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/boron_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "P_Si_crystalline_standard",
+      "species": "P",
+      "material": "Si",
+      "substrateTypes": ["crystalline"],
+      "preferredModel": "DualPearsonIV",
+      "tableFile": "vsclib/implant/tables/phosphorus_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/phosphorus_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "P_Si_amorphous_standard",
+      "species": "P",
+      "material": "Si",
+      "substrateTypes": ["amorphous"],
+      "preferredModel": "PearsonIV",
+      "tableFile": "vsclib/implant/tables/phosphorus_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/phosphorus_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "As_Si_crystalline_standard",
+      "species": "As",
+      "material": "Si",
+      "substrateTypes": ["crystalline"],
+      "preferredModel": "DualPearsonIV",
+      "tableFile": "vsclib/implant/tables/arsenic_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/arsenic_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "As_Si_amorphous_standard",
+      "species": "As",
+      "material": "Si",
+      "substrateTypes": ["amorphous"],
+      "preferredModel": "PearsonIV",
+      "tableFile": "vsclib/implant/tables/arsenic_in_silicon_standard",
+      "damageTableFile": "vsclib/implant/tables/arsenic_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus)"
+    },
+    {
+      "id": "Sb_Si_crystalline_standard",
+      "species": "Sb",
+      "material": "Si",
+      "substrateTypes": ["crystalline"],
+      "preferredModel": "DualPearsonIV",
+      "tableFile": "vsclib/implant/tables/antimony_in_semiconductor_standard",
+      "damageTableFile": "vsclib/implant/tables/antimony_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus; Sb uses semiconductor implant table)"
+    },
+    {
+      "id": "Sb_Si_amorphous_standard",
+      "species": "Sb",
+      "material": "Si",
+      "substrateTypes": ["amorphous"],
+      "preferredModel": "PearsonIV",
+      "tableFile": "vsclib/implant/tables/antimony_in_semiconductor_standard",
+      "damageTableFile": "vsclib/implant/tables/antimony_damage_in_silicon_standard",
+      "source": "vsclib internal copy (origin: Taurus; Sb uses semiconductor implant table)"
+    }
+  ]
+}

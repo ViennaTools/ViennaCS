@@ -492,10 +492,14 @@ template <int D> void bindAPI(py::module &module) {
            py::arg("enable") = true)
       .def("setDamageLabels", &Anneal<T, D>::setDamageLabels)
       .def("setDefectLabels", &Anneal<T, D>::setDefectLabels)
+      .def("resetDefectInitialization", &Anneal<T, D>::resetDefectInitialization)
       .def("setDefectSourceWeights", &Anneal<T, D>::setDefectSourceWeights)
       .def("setDefectPartition", &Anneal<T, D>::setDefectPartition)
       .def("setDefectDiffusivities", &Anneal<T, D>::setDefectDiffusivities)
       .def("setDefectReactionRates", &Anneal<T, D>::setDefectReactionRates)
+      .def("enableDefectEquilibrium", &Anneal<T, D>::enableDefectEquilibrium,
+           py::arg("enable") = true)
+      .def("setDefectEquilibrium", &Anneal<T, D>::setDefectEquilibrium)
       .def("setDefectEnhancedDiffusion",
            &Anneal<T, D>::setDefectEnhancedDiffusion)
       .def("enableDefectClustering", &Anneal<T, D>::enableDefectClustering,

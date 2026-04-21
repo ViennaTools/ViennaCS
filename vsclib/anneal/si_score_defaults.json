@@ -1,0 +1,162 @@
+{
+  "schemaVersion": "1.0",
+  "description": "ViennaCS internal anneal defaults derived from score/Params Si model files (Arrhenius form in cm-based units).",
+  "entries": [
+    {
+      "id": "Si_B_score2014",
+      "material": "Si",
+      "species": ["B"],
+      "dopantDiffusion": {
+        "D0_cm2_per_s": 0.291,
+        "Ea_eV": 3.57,
+        "source": "score/Params/Silicon/Boron/Interstitial : D[0]"
+      },
+      "defects": {
+        "interstitial": {
+          "Di": { "D0_cm2_per_s": 51.0, "Ea_eV": 1.77 },
+          "Cstar": { "C0_cm3": 3.12e23, "Ea_eV": 2.932 }
+        },
+        "vacancy": {
+          "Dv": { "D0_cm2_per_s": 0.03, "Ea_eV": 1.8 },
+          "Cstar": { "C0_cm3": 1.533e24, "Ea_eV": 2.34 }
+        },
+        "recombination": {
+          "mode": "capture_radius",
+          "radius_cm": 5.43e-8,
+          "capForReducedModel_cm3_per_s": 1e-25
+        }
+      },
+      "interstitialCluster": {
+        "Ikfi": { "D0": 1.729e-5, "Ea_eV": 1.77 },
+        "Ikfc": { "D0": 1.729e-5, "Ea_eV": 2.096 },
+        "Ikr": { "D0": 6.996e16, "Ea_eV": 3.935 },
+        "InitPercent": 1.0
+      },
+      "implantDamageFactors": {
+        "IFactor": 1.0,
+        "VFactor": 0.0,
+        "DFactor": 1.0,
+        "MCIFactor": 1.0,
+        "MCVFactor": 1.0,
+        "source": "score/Params/Silicon/Boron/Info"
+      }
+    },
+    {
+      "id": "Si_P_score2014",
+      "material": "Si",
+      "species": ["P"],
+      "dopantDiffusion": {
+        "D0_cm2_per_s": 0.6,
+        "Ea_eV": 3.482,
+        "source": "score/Params/Silicon/Phosphorus/Interstitial : D[0]"
+      },
+      "defects": {
+        "interstitial": {
+          "Di": { "D0_cm2_per_s": 51.0, "Ea_eV": 1.77 },
+          "Cstar": { "C0_cm3": 3.12e23, "Ea_eV": 2.932 }
+        },
+        "vacancy": {
+          "Dv": { "D0_cm2_per_s": 0.03, "Ea_eV": 1.8 },
+          "Cstar": { "C0_cm3": 1.533e24, "Ea_eV": 2.34 }
+        },
+        "recombination": {
+          "mode": "capture_radius",
+          "radius_cm": 5.43e-8,
+          "capForReducedModel_cm3_per_s": 1e-25
+        }
+      },
+      "interstitialCluster": {
+        "Ikfi": { "D0": 1.729e-5, "Ea_eV": 1.77 },
+        "Ikfc": { "D0": 1.729e-5, "Ea_eV": 2.096 },
+        "Ikr": { "D0": 6.996e16, "Ea_eV": 3.935 },
+        "InitPercent": 1.0
+      },
+      "implantDamageFactors": {
+        "IFactor": 1.0,
+        "VFactor": 0.0,
+        "DFactor": 1.0,
+        "MCIFactor": 1.0,
+        "MCVFactor": 1.0,
+        "source": "score/Params/Silicon/Phosphorus/Info"
+      }
+    },
+    {
+      "id": "Si_As_score2014",
+      "material": "Si",
+      "species": ["As"],
+      "dopantDiffusion": {
+        "D0_cm2_per_s": 0.012,
+        "Ea_eV": 3.44,
+        "source": "score/Params/Silicon/Arsenic/Interstitial : D[0]"
+      },
+      "defects": {
+        "interstitial": {
+          "Di": { "D0_cm2_per_s": 51.0, "Ea_eV": 1.77 },
+          "Cstar": { "C0_cm3": 3.12e23, "Ea_eV": 2.932 }
+        },
+        "vacancy": {
+          "Dv": { "D0_cm2_per_s": 0.03, "Ea_eV": 1.8 },
+          "Cstar": { "C0_cm3": 1.533e24, "Ea_eV": 2.34 }
+        },
+        "recombination": {
+          "mode": "capture_radius",
+          "radius_cm": 5.43e-8,
+          "capForReducedModel_cm3_per_s": 1e-25
+        }
+      },
+      "interstitialCluster": {
+        "Ikfi": { "D0": 1.729e-5, "Ea_eV": 1.77 },
+        "Ikfc": { "D0": 1.729e-5, "Ea_eV": 2.096 },
+        "Ikr": { "D0": 6.996e16, "Ea_eV": 3.935 },
+        "InitPercent": 1.0
+      },
+      "implantDamageFactors": {
+        "IFactor": 1.0,
+        "VFactor": 0.0,
+        "DFactor": 1.0,
+        "MCIFactor": 1.0,
+        "MCVFactor": 1.0,
+        "source": "score/Params/Silicon/Arsenic/Info"
+      }
+    },
+    {
+      "id": "Ge_B_score2014",
+      "material": "Ge",
+      "species": ["B"],
+      "dopantDiffusion": {
+        "D0_cm2_per_s": 120000.0,
+        "Ea_eV": 4.65,
+        "source": "score/Params/Germanium/Boron/Interstitial : D[0]"
+      },
+      "defects": {
+        "interstitial": {
+          "Di": { "D0_cm2_per_s": 0.12, "Ea_eV": 1.2 },
+          "Cstar": { "C0_cm3": 1.4e27, "Ea_eV": 3.18 }
+        },
+        "vacancy": {
+          "Dv": { "D0_cm2_per_s": 0.807, "Ea_eV": 0.74 },
+          "Cstar": { "C0_cm3": 1.487e24, "Ea_eV": 2.35 }
+        },
+        "recombination": {
+          "mode": "capture_radius",
+          "radius_cm": 5.66e-8,
+          "capForReducedModel_cm3_per_s": 1e-25
+        }
+      },
+      "interstitialCluster": {
+        "Ikfi": { "D0": 4.072e-8, "Ea_eV": 1.2 },
+        "Ikfc": { "D0": 4.072e-8, "Ea_eV": 1.5 },
+        "Ikr": { "D0": 2.069e15, "Ea_eV": 2.45 },
+        "InitPercent": 1.0
+      },
+      "implantDamageFactors": {
+        "IFactor": 1.0,
+        "VFactor": 0.0,
+        "DFactor": 1.0,
+        "MCIFactor": 1.0,
+        "MCVFactor": 1.0,
+        "source": "score/Params/Germanium/Boron/Info"
+      }
+    }
+  ]
+}

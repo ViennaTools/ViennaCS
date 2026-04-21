@@ -1,4 +1,4 @@
-# implantMask2D: Masked Implant + Damage + Anneal (ViennaCS Core)
+# implantMask2D: Masked Implant + Damage + Anneal
 
 This example builds a 2D masked structure, performs implantation with optional table-driven calibration, computes implant damage, and optionally anneals dopant and defects (explicit or implicit, isothermal or ramped multi-step).
 
@@ -158,7 +158,7 @@ Numerics:
 
 ### 6.2 Defect-coupled anneal (I/V + TED)
 
-When `annealDefectCoupling=1`, interstitial (`I`) and vacancy (`V`) fields are initialized from damage:
+With defect-coupled anneal enabled (default: `annealDefectCoupling=1`), interstitial (`I`) and vacancy (`V`) fields are initialized from damage:
 
 ```text
 S  = wh * Damage + wl * Damage_LastImp
@@ -169,9 +169,12 @@ V0 = fV * S
 Then per timestep:
 
 ```text
-dI/dt = DI * Lap(I) - krec * I * V - kI * I
-dV/dt = DV * Lap(V) - krec * I * V - kV * V
+dI/dt = DI * Lap(I) - krec * (I*V - Ieq*Veq) - kI * (I - Ieq)
+dV/dt = DV * Lap(V) - krec * (I*V - Ieq*Veq) - kV * (V - Veq)
 ```
+
+With `annealDefectUseEquilibrium=1` (default), equilibrium values can be taken from AdvCal `Cstar` lookup or provided explicitly.  
+With `annealDefectUseEquilibrium=0`, `Ieq=Veq=0` and fields represent excess-defect-like concentrations.
 
 TED coupling modifies dopant diffusivity locally:
 
@@ -219,6 +222,7 @@ For crystalline dual-Pearson entries, additional reshaping/tail suppression is a
 - `species`, `material`, `energyKeV`, `substrateType`, `screenThickness`, `damageLevel`
 - `preferredModel` (`PearsonIV`, `DualPearsonIV`, or `auto`)
 - `tablePath`
+- Internal implant DB: `implantUseInternalDb`, `implantDbFile` (default: `vsclib/implant/si_taurus_defaults.json`)
 - `implantSpeciesLabel` (default: `concentration_annealed`)
 
 ### Manual implant moments (used when `projectedRange` is provided)
@@ -238,15 +242,47 @@ For crystalline dual-Pearson entries, additional reshaping/tail suppression is a
 - Dopant diffusion (constant): `annealDiffusionCoefficient`
 - Dopant diffusion (Arrhenius): `annealD0`, `annealEa`, `annealTemperature`
 - Anneal table lookup: `annealUseTableLookup`, `annealTablePath` (default: `data/AnnealData/AdvCal_2023.12.fps` in the package)
-  - Current lookup maps AdvCal `Si B Int D`, `Si Int Di`, `Si Vac Dv`, bulk I-V recombination surrogate, and Si ICluster (`Ikfi`, `Ikfc`, `Ikr`, `InitPercent`)
+  - Current lookup maps AdvCal `Si B Int D`, `Si Int Di`, `Si Vac Dv`, `Si Int Cstar`, `Si Vac Cstar`, bulk I-V recombination surrogate, and Si ICluster (`Ikfi`, `Ikfc`, `Ikr`, `InitPercent`)
+- Internal anneal DB: `annealUseInternalDb`, `annealDbFile` (default: `vsclib/anneal/si_score_defaults.json`)
+- SCORE implant factor fallback (off by default): `annealUseScoreDirectFallback=1`, `scoreParamsRoot` (default: `data/lib/score/Params`)
 - Temperature schedule keys: `annealStepDurations`, `annealTemperatures`, `annealRampTemperatures` (alias fallback in script)
-- Defect coupling enable: `annealDefectCoupling`
+- Defect coupling enable: `annealDefectCoupling` (default: `1`; set `0` to disable)
 - Defect labels: `annealDamageLabel`, `annealDamageLastImpLabel`, `annealInterstitialLabel`, `annealVacancyLabel`
 - Defect source and partition: `annealDefectFromDamageHistoryWeight`, `annealDefectFromDamageLastImpWeight`, `annealDefectToInterstitial`, `annealDefectToVacancy`
 - Defect transport and reactions: `annealInterstitialDiffusivity`, `annealVacancyDiffusivity`, `annealDefectRecombinationRate`, `annealInterstitialSinkRate`, `annealVacancySinkRate`
+- Sink surrogate controls: `annealSinkRateCap`, `annealKsurfRecombinationLengthCm`
+- Defect equilibrium control: `annealDefectUseEquilibrium`, `annealInterstitialEquilibrium`, `annealVacancyEquilibrium`
 - Interstitial clustering (one-moment surrogate): `annealDefectClustering`, `annealIClusterLabel`, `annealIClusterIkfi`, `annealIClusterIkfc`, `annealIClusterIkr`, `annealIClusterInitFraction`
   - This mapping is experimental in the reduced ViennaCS defect model and is off by default.
 - TED coupling: `annealTEDCoefficient`, `annealTEDNormalization`
+- Diagnostics: `annealDiagnostics`, `annealDiagnosticsCsv`, `annealDiagnosticsPlot`, `annealDiagnosticsPlotFile`
+
+### 8.1 Defect parameter meaning, origin, and dopant dependence
+
+- `annealDefectCoupling`: turns on solved I/V fields and TED coupling (default `1`); if set to `0`, anneal is pure dopant diffusion.
+- `annealDefectFromDamageHistoryWeight`: weight of accumulated `Damage` when seeding initial I/V fields at anneal start.
+- `annealDefectFromDamageLastImpWeight`: weight of `Damage_LastImp` when seeding I/V; in single-implant examples this is usually the dominant source.
+- `annealDefectToInterstitial`: partition factor from defect source to initial interstitial field.
+- `annealDefectToVacancy`: partition factor from defect source to initial vacancy field.
+- `annealInterstitialSinkRate`: linear relaxation/removal coefficient for interstitials; reduced-model surrogate, not directly looked up from AdvCal.
+- `annealVacancySinkRate`: linear relaxation/removal coefficient for vacancies; reduced-model surrogate, not directly looked up from AdvCal.
+- `annealDefectUseEquilibrium`: switches recombination/sinks from decay-to-zero (excess-defect mode) to relaxation toward `(Ieq,Veq)`.
+- `annealTEDCoefficient`: scales how strongly `(I-V)` boosts dopant diffusivity in this reduced model.
+- `annealTEDNormalization`: reference concentration scale used to nondimensionalize `(I-V)` inside TED factor.
+- `annealDefectClustering`: enables one-moment interstitial-cluster surrogate (`ICluster`) in the reduced model.
+
+Origin and calibration notes:
+- `annealInterstitialDiffusivity`, `annealVacancyDiffusivity`, `annealD0`, `annealEa`, `annealInterstitialEquilibrium`, `annealVacancyEquilibrium` are looked up from `AdvCal_2023.12.fps` (or overridden explicitly).
+- `annealDefectRecombinationRate` defaults from an AdvCal-inspired capture-radius formula, then is bounded for stability in this reduced PDE model.
+- `annealIClusterIkfi`, `annealIClusterIkfc`, `annealIClusterIkr`, `annealIClusterInitFraction` can be mapped from AdvCal but remain experimental here.
+- If not explicitly provided, `annealDefectToInterstitial`/`annealDefectToVacancy` are now derived from SCORE implant factors (`MCIFactor`/`MCVFactor`, fallback `IFactor`/`VFactor`) stored in internal `vsclib` anneal entries.
+- Direct parsing from `data/lib/score/Params/.../Info` is available only via `annealUseScoreDirectFallback=1`.
+- If not explicitly provided, sink rates are derived from Ksurf-style defaults via `k_sink ~ D/Lrec^2` and then bounded by `annealSinkRateCap` (default `1e-4`).
+- If not explicitly provided, `annealTEDCoefficient` defaults to `0.5 * DFactor` from SCORE `Info`; `annealTEDNormalization` remains user-controlled (default `1e20`).
+
+Dopant dependence:
+- Physically, most of these parameters are not universal constants; they depend on dopant species, damage state, and anneal temperature.
+- In this example, only parameters explicitly table-mapped from AdvCal are species/material-aware by default; the remaining knobs are user calibration parameters.
 
 ## 9. Output fields in `final.vtu`
 
@@ -262,6 +298,11 @@ If defect-coupled anneal is enabled:
 - `Vacancy`
 - `ICluster` (when defect clustering is enabled and kinetics are nonzero)
 
+If defect equilibrium mode is enabled:
+- `I_over_Ieq`
+- `V_over_Veq`
+- `IV_over_IeqVeq`
+
 Units:
 - geometric lengths in this example are nm (because `setLengthUnitInCm(1e-7)`)
 - concentration and damage outputs are scaled to `cm^-3` when `setOutputConcentrationInCm3(True)` is active
@@ -270,5 +311,5 @@ Units:
 
 - For robust TCAD calibration, prefer table-driven mode (`config_table.txt`) and keep manual moment mode for controlled experiments.
 - For large anneal timesteps, use `annealMode=implicit`.
-- Defect kinetics are stiff in `cm^-3` units. If `annealDefectRecombinationRate`, sink rates, or `annealDefectToInterstitial/Vacancy` are too large, `Interstitial/Vacancy` can collapse in high-damage regions and produce hollow/ring-like artifacts.
+- Defect kinetics are stiff in `cm^-3` units. If `annealDefectRecombinationRate`, sink rates, or `annealDefectToInterstitial/Vacancy` are too large, `Interstitial/Vacancy` can collapse quickly; this is expected in excess-defect mode, but may be too aggressive for long thermal budgets.
 - The AdvCal bulk I-V recombination term is much stiffer than this reduced model can use directly; the example applies a bounded surrogate default and prints both bounded and raw values.

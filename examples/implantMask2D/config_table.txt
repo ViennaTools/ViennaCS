@@ -7,55 +7,15 @@ openingWidth=15.0
 maskHeight=10.0
 oxideThickness=2.0
 
-# Same target recipe as config.txt, but using top-level implant conditions only.
-# The example will look up the moments from a real Taurus implant table.
 species=B
 material=Si
 energyKeV=10.0
-rotationDeg=0.0
 angle=7.0
+rotationDeg=0.0
 doseCm2=1.0e15
-doseControl=WaferDose
 substrateType=crystalline
 screenThickness=2.0
-damageLevel=0.0
-tablePath=../../data/ImplData/Taurus/boron_in_silicon_standard
 
-# Keep the preferred lateral formulation explicit at the recipe level.
-# The actual calibrated values come from the implant table entry.
-preferredModel=DualPearsonIV
-
-# Optional anneal step (finite-difference in ViennaCS core)
-# annealDuration=10.0
-# annealDiffusionCoefficient=0.05
 annealMode=implicit
-# annealImplicitMaxIterations=500
-# annealImplicitTolerance=1e-6
-# Table-driven anneal defaults from Sentaurus AdvCal file:
-annealUseTableLookup=1
-annealTablePath=../../data/AnnealData/AdvCal_2023.12.fps
-# Optional explicit Arrhenius override:
-# annealD0=1.0e4
-# annealEa=3.46
-# annealTemperature=1273.15
-# Multi-step schedules (times in s, temperatures in K):
-annealStepDurations=5.0,10.0,20.0
-annealTemperatures=1173.15,1273.15,1373.15
-# Ramp schedule variant (N durations + N+1 temperatures):
-# annealStepDurations=5.0,10.0
-# annealTemperatures=1073.15,1273.15,1373.15
-#
-# Optional defect-coupled anneal (I/V sourced from Damage and Damage_LastImp)
-annealDefectCoupling=1
-annealDefectFromDamageHistoryWeight=0.0
-annealDefectFromDamageLastImpWeight=1.0
-annealDefectToInterstitial=0.05
-annealDefectToVacancy=0.05
-# By default, annealDefectRecombinationRate is looked up from AdvCal.
-# annealDefectRecombinationRate=1e-25
-annealInterstitialSinkRate=1e-4
-annealVacancySinkRate=1e-4
-annealTEDCoefficient=0.5
-annealTEDNormalization=1e20
-# Experimental mapping of AdvCal ICluster kinetics into reduced model:
-annealDefectClustering=0
+annealStepDurations=5.0,30.0,10.0
+annealTemperatures=673.15,1373.15,1373.15,973.15
