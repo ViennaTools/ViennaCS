@@ -31,9 +31,12 @@ preferredModel=DualPearsonIV
 annealMode=implicit
 # annealImplicitMaxIterations=500
 # annealImplicitTolerance=1e-6
-# Or Arrhenius form:
-annealD0=1.0e4
-annealEa=3.46
+# Table-driven anneal defaults from Sentaurus AdvCal file:
+annealUseTableLookup=1
+annealTablePath=../../data/AnnealData/AdvCal_2023.12.fps
+# Optional explicit Arrhenius override:
+# annealD0=1.0e4
+# annealEa=3.46
 # annealTemperature=1273.15
 # Multi-step schedules (times in s, temperatures in K):
 annealStepDurations=5.0,10.0,20.0
@@ -48,10 +51,11 @@ annealDefectFromDamageHistoryWeight=0.0
 annealDefectFromDamageLastImpWeight=1.0
 annealDefectToInterstitial=0.05
 annealDefectToVacancy=0.05
-annealInterstitialDiffusivity=0.02
-annealVacancyDiffusivity=0.01
-annealDefectRecombinationRate=1e-25
+# By default, annealDefectRecombinationRate is looked up from AdvCal.
+# annealDefectRecombinationRate=1e-25
 annealInterstitialSinkRate=1e-4
 annealVacancySinkRate=1e-4
 annealTEDCoefficient=0.5
 annealTEDNormalization=1e20
+# Experimental mapping of AdvCal ICluster kinetics into reduced model:
+annealDefectClustering=0

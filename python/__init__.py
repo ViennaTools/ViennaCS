@@ -71,6 +71,14 @@ def getDefaultImplantTablePath() -> str:
     )
 
 
+def getDefaultAnnealTablePath() -> str:
+    import os
+
+    return os.path.join(
+        os.path.dirname(__file__), "data", "AnnealData", "AdvCal_2023.12.fps"
+    )
+
+
 def __getattr__(name):
     # 1) common/top-level from _core
     try:

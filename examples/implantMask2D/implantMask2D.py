@@ -1,4 +1,6 @@
 import sys
+import math
+import re
 from pathlib import Path
 
 try:
@@ -54,6 +56,176 @@ def parse_float_list(value) -> list[float]:
             if tok.strip()
         ]
     return [float(v) for v in value]
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _canonical_species_token(species: str) -> str:
+    lut = {
+        "b": "B",
+        "boron": "B",
+        "p": "P",
+        "phosphorus": "P",
+        "as": "As",
+        "arsenic": "As",
+        "sb": "Sb",
+        "antimony": "Sb",
+        "in": "In",
+        "indium": "In",
+    }
+    return lut.get(species.strip().lower(), species.strip())
+
+
+def _canonical_material_token(material: str) -> str:
+    lut = {
+        "si": "Si",
+        "silicon": "Si",
+        "ge": "Ge",
+        "germanium": "Ge",
+    }
+    return lut.get(material.strip().lower(), material.strip())
+
+
+def _eval_arrhenius_cm2_per_s(prefactor: float, activation_eV: float, temperatureK: float) -> float:
+    kB_eV_per_K = 8.617333262145e-5
+    t = max(float(temperatureK), 1.0)
+    return float(prefactor) * math.exp(-float(activation_eV) / (kB_eV_per_K * t))
+
+
+def load_advcal_anneal_defaults(
+    file_name: str,
+    material: str,
+    species: str,
+    temperatureK: float,
+    length_unit_in_cm: float,
+) -> dict:
+    file_path = Path(file_name)
+    if not file_path.exists():
+        return {}
+
+    text = file_path.read_text(encoding="utf-8", errors="ignore")
+    mat = _canonical_material_token(material)
+    sp = _canonical_species_token(species)
+
+    result = {
+        "tableFileName": str(file_path),
+        "material": mat,
+        "species": sp,
+    }
+
+    m_int = re.search(
+        rf"pdbSetDouble\s+{re.escape(mat)}\s+Int\s+Di\s+\{{\s*\[Arr\s+([0-9eE+.\-]+)\s+([0-9eE+.\-]+)\]\s*\}}",
+        text,
+    )
+    m_vac = re.search(
+        rf"pdbSetDouble\s+{re.escape(mat)}\s+Vac\s+Dv\s+\{{\s*\[Arr\s+([0-9eE+.\-]+)\s+([0-9eE+.\-]+)\]\s*\}}",
+        text,
+    )
+
+    # For dopant diffusivity, use the neutral BI pair Arrhenius entry:
+    # pdbSetDoubleArray Si B Int D { 0 {[Arr D0 Ea]} ... }.
+    d0_ea = re.search(
+        rf"pdbSetDoubleArray\s+{re.escape(mat)}\s+{re.escape(sp)}\s+Int\s+D\s*\{{.*?\n\s*0\s+\{{\s*\[Arr\s+([0-9eE+.\-]+)\s+([0-9eE+.\-]+)\]\s*\}}",
+        text,
+        flags=re.DOTALL,
+    )
+
+    ikfi_factor = re.search(
+        rf"pdbSet\s+{re.escape(mat)}\s+ICluster\s+Ikfi\s+\{{\s*\[expr\s+([0-9eE+.\-]+)\s*\*\s*\[pdbGet\s+{re.escape(mat)}\s+I\s+Di\]\]\s*\}}",
+        text,
+    )
+    ikfc_arr = re.search(
+        rf"pdbSet\s+{re.escape(mat)}\s+ICluster\s+Ikfc\s+\{{\s*\[expr\s+\[Arr\s+([0-9eE+.\-]+)\s+([0-9eE+.\-]+)\]\s*\*\s*\[pdbGet\s+{re.escape(mat)}\s+I\s+Di\]\]\s*\}}",
+        text,
+    )
+    ikr_arr = re.search(
+        rf"pdbSet\s+{re.escape(mat)}\s+ICluster\s+Ikr\s+\{{\s*\[Arr\s+([0-9eE+.\-]+)\s+([0-9eE+.\-]+)\]\s*\}}",
+        text,
+    )
+    icluster_init_percent = re.search(
+        rf"pdbSet\s+{re.escape(mat)}\s+ICluster\s+InitPercent\s+([0-9eE+.\-]+)",
+        text,
+    )
+
+    unit_scale = 1.0 / max(float(length_unit_in_cm) ** 2, 1.0e-30)
+
+    if d0_ea:
+        d0_cm2_s = float(d0_ea.group(1))
+        ea_eV = float(d0_ea.group(2))
+        result["annealD0_cm2_per_s"] = d0_cm2_s
+        result["annealEa_eV"] = ea_eV
+        result["annealD0"] = d0_cm2_s * unit_scale
+        result["annealEa"] = ea_eV
+
+    if m_int:
+        di_cm2_s = _eval_arrhenius_cm2_per_s(
+            float(m_int.group(1)),
+            float(m_int.group(2)),
+            temperatureK,
+        )
+        result["annealInterstitialDiffusivity_cm2_per_s"] = di_cm2_s
+        result["annealInterstitialDiffusivity"] = di_cm2_s * unit_scale
+
+    if m_vac:
+        dv_cm2_s = _eval_arrhenius_cm2_per_s(
+            float(m_vac.group(1)),
+            float(m_vac.group(2)),
+            temperatureK,
+        )
+        result["annealVacancyDiffusivity_cm2_per_s"] = dv_cm2_s
+        result["annealVacancyDiffusivity"] = dv_cm2_s * unit_scale
+
+    # Approximate bulk I-V recombination coefficient from AdvCal expression:
+    # k_bulk ~ 4*pi*Rcapture*(Di + Dv), with Rcapture = 5e-8 cm in AdvCal.
+    if "annealInterstitialDiffusivity_cm2_per_s" in result and "annealVacancyDiffusivity_cm2_per_s" in result:
+        r_capture_cm = 5.0e-8
+        krec_cm3_s = 4.0 * math.pi * r_capture_cm * (
+            result["annealInterstitialDiffusivity_cm2_per_s"]
+            + result["annealVacancyDiffusivity_cm2_per_s"]
+        )
+        # Raw AdvCal value is too stiff for the current reduced I/V state model.
+        # Use a bounded surrogate as default while keeping raw for traceability.
+        result["annealDefectRecombinationRateAdvCalRaw"] = krec_cm3_s
+        result["annealDefectRecombinationRate"] = min(krec_cm3_s, 1.0e-25)
+        result["advcalBulkCaptureRadius_cm"] = r_capture_cm
+
+    # One-moment interstitial cluster kinetics (surrogate mapping).
+    if "annealInterstitialDiffusivity_cm2_per_s" in result:
+        di_cm2_s = result["annealInterstitialDiffusivity_cm2_per_s"]
+        if ikfi_factor:
+            result["annealIClusterIkfi"] = float(ikfi_factor.group(1)) * di_cm2_s
+        if ikfc_arr:
+            ikfc_pref = _eval_arrhenius_cm2_per_s(
+                float(ikfc_arr.group(1)),
+                float(ikfc_arr.group(2)),
+                temperatureK,
+            )
+            result["annealIClusterIkfc"] = ikfc_pref * di_cm2_s
+        if ikr_arr:
+            result["annealIClusterIkr"] = _eval_arrhenius_cm2_per_s(
+                float(ikr_arr.group(1)),
+                float(ikr_arr.group(2)),
+                temperatureK,
+            )
+        if icluster_init_percent:
+            result["annealIClusterInitFraction"] = max(
+                0.0, min(1.0, float(icluster_init_percent.group(1)) / 100.0)
+            )
+
+    return result
 
 
 def make_bounds(
@@ -175,6 +347,7 @@ def main() -> int:
     rotation_deg = params.get("rotationDeg", 0.0)
     screen_thickness = params.get("screenThickness", 0.0)
     damage_level = params.get("damageLevel", 0.0)
+    length_unit_in_cm = params.get("lengthUnitInCm", 1.0e-7)
     dose_control = str(params.get("doseControl", "WaferDose"))
     preferred_model = str(
         params.get(
@@ -312,7 +485,7 @@ def main() -> int:
     if hasattr(implant, "setDose"):
         implant.setDose(implant_dose_cm2)
     if hasattr(implant, "setLengthUnitInCm"):
-        implant.setLengthUnitInCm(1.0e-7)
+        implant.setLengthUnitInCm(length_unit_in_cm)
     if hasattr(implant, "enableBeamHits"):
         implant.enableBeamHits(True)
     if hasattr(implant, "setOutputConcentrationInCm3"):
@@ -335,6 +508,49 @@ def main() -> int:
         sum(anneal_step_durations) if anneal_step_durations else 0.0,
     )
     if (anneal_duration > 0.0 or anneal_step_durations) and hasattr(vcs, "Anneal"):
+        anneal_reference_temperature = params.get("annealTemperature", 1273.15)
+        parsed_schedule_temperatures = parse_float_list(params.get("annealTemperatures"))
+        if not parsed_schedule_temperatures:
+            parsed_schedule_temperatures = parse_float_list(params.get("annealRampTemperatures"))
+        if parsed_schedule_temperatures:
+            anneal_reference_temperature = parsed_schedule_temperatures[0]
+
+        anneal_table_defaults = {}
+        if parse_bool(params.get("annealUseTableLookup", 1), True):
+            anneal_table_file = params.get(
+                "annealTablePath",
+                _vcs.getDefaultAnnealTablePath()
+                if hasattr(_vcs, "getDefaultAnnealTablePath")
+                else "data/AnnealData/AdvCal_2023.12.fps",
+            )
+            anneal_table_file = Path(str(anneal_table_file))
+            if not anneal_table_file.is_absolute():
+                candidate = (config_dir / anneal_table_file).resolve()
+                if candidate.exists():
+                    anneal_table_file = candidate
+                else:
+                    repo_candidate = (Path(__file__).resolve().parents[2] / anneal_table_file).resolve()
+                    if repo_candidate.exists():
+                        anneal_table_file = repo_candidate
+            anneal_table_defaults = load_advcal_anneal_defaults(
+                str(anneal_table_file),
+                material=material,
+                species=species,
+                temperatureK=anneal_reference_temperature,
+                length_unit_in_cm=length_unit_in_cm,
+            )
+            if anneal_table_defaults:
+                print(
+                    f"Using anneal defaults from {anneal_table_defaults.get('tableFileName')}"
+                )
+                raw_krec = anneal_table_defaults.get("annealDefectRecombinationRateAdvCalRaw")
+                used_krec = anneal_table_defaults.get("annealDefectRecombinationRate")
+                if raw_krec is not None and used_krec is not None and raw_krec > used_krec:
+                    print(
+                        f"Using bounded defect recombination surrogate {used_krec:.3e} "
+                        f"(raw AdvCal value {raw_krec:.3e})."
+                    )
+
         anneal = vcs.Anneal()
         anneal.setCellSet(cell_set)
         anneal.setSpeciesLabel(str(params.get("annealSpeciesLabel", implant_species_label)))
@@ -360,15 +576,19 @@ def main() -> int:
         elif "annealD0" in params and "annealEa" in params:
             anneal.setArrheniusParameters(params.get("annealD0"), params.get("annealEa"))
             anneal.setTemperature(params.get("annealTemperature", 1273.15))
+        elif "annealD0" in anneal_table_defaults and "annealEa" in anneal_table_defaults:
+            anneal.setArrheniusParameters(
+                anneal_table_defaults.get("annealD0"),
+                anneal_table_defaults.get("annealEa"),
+            )
+            anneal.setTemperature(params.get("annealTemperature", anneal_reference_temperature))
         else:
             print("Anneal requested but no diffusion model parameters found; skipping anneal.")
             anneal_duration = 0.0
 
         if anneal_duration > 0.0 or anneal_step_durations:
             step_durations = anneal_step_durations
-            step_temperatures = parse_float_list(params.get("annealTemperatures"))
-            if not step_temperatures:
-                step_temperatures = parse_float_list(params.get("annealRampTemperatures"))
+            step_temperatures = parsed_schedule_temperatures
 
             if step_durations and hasattr(anneal, "clearTemperatureSchedule"):
                 anneal.clearTemperatureSchedule()
@@ -398,7 +618,7 @@ def main() -> int:
 
             anneal.setDiffusionMaterials([1])
             anneal.setBlockingMaterials([2])
-            if params.get("annealDefectCoupling", 0.0) > 0.0:
+            if parse_bool(params.get("annealDefectCoupling", 0.0), False):
                 anneal.enableDefectCoupling(True)
                 anneal.setDamageLabels(
                     str(params.get("annealDamageLabel", "Damage")),
@@ -417,11 +637,20 @@ def main() -> int:
                     params.get("annealDefectToVacancy", 0.5),
                 )
                 anneal.setDefectDiffusivities(
-                    params.get("annealInterstitialDiffusivity", 0.0),
-                    params.get("annealVacancyDiffusivity", 0.0),
+                    params.get(
+                        "annealInterstitialDiffusivity",
+                        anneal_table_defaults.get("annealInterstitialDiffusivity", 0.0),
+                    ),
+                    params.get(
+                        "annealVacancyDiffusivity",
+                        anneal_table_defaults.get("annealVacancyDiffusivity", 0.0),
+                    ),
                 )
                 anneal.setDefectReactionRates(
-                    params.get("annealDefectRecombinationRate", 0.0),
+                    params.get(
+                        "annealDefectRecombinationRate",
+                        anneal_table_defaults.get("annealDefectRecombinationRate", 0.0),
+                    ),
                     params.get("annealInterstitialSinkRate", 0.0),
                     params.get("annealVacancySinkRate", 0.0),
                 )
@@ -429,6 +658,33 @@ def main() -> int:
                     params.get("annealTEDCoefficient", 0.0),
                     params.get("annealTEDNormalization", 1.0e20),
                 )
+                if parse_bool(params.get("annealDefectClustering", 0), False):
+                    ikfi = params.get(
+                        "annealIClusterIkfi",
+                        anneal_table_defaults.get("annealIClusterIkfi", 0.0),
+                    )
+                    ikfc = params.get(
+                        "annealIClusterIkfc",
+                        anneal_table_defaults.get("annealIClusterIkfc", 0.0),
+                    )
+                    ikr = params.get(
+                        "annealIClusterIkr",
+                        anneal_table_defaults.get("annealIClusterIkr", 0.0),
+                    )
+                    if any(v > 0.0 for v in (ikfi, ikfc, ikr)):
+                        anneal.enableDefectClustering(True)
+                        anneal.setDefectClusterLabel(
+                            str(params.get("annealIClusterLabel", "ICluster"))
+                        )
+                        anneal.setDefectClusterKinetics(ikfi, ikfc, ikr)
+                        anneal.setDefectClusterInitFraction(
+                            params.get(
+                                "annealIClusterInitFraction",
+                                anneal_table_defaults.get(
+                                    "annealIClusterInitFraction", 0.0
+                                ),
+                            )
+                        )
             anneal.apply()
             print("Anneal step completed.")
 

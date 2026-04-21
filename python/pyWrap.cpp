@@ -21,6 +21,14 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
         os.attr("path").attr("dirname")(moduleFile), "data", "implant",
         "implant_moments.csv"));
   });
+  module.def("getDefaultAnnealTablePath", []() {
+    py::module_ os = py::module_::import("os");
+    py::module_ pkg = py::module_::import("viennacs");
+    py::object moduleFile = pkg.attr("__file__");
+    return py::str(os.attr("path").attr("join")(
+        os.attr("path").attr("dirname")(moduleFile), "data", "AnnealData",
+        "AdvCal_2023.12.fps"));
+  });
 
   py::class_<constants::PearsonIVParameters<T>>(module, "PearsonIVParameters")
       .def(py::init<>())

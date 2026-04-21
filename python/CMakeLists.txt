@@ -71,6 +71,10 @@ install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/data/ImplData/Taurus
   DESTINATION ${PKG}/data/ImplData
   OPTIONAL)
+install(
+  DIRECTORY ${CMAKE_SOURCE_DIR}/data/AnnealData
+  DESTINATION ${PKG}/data
+  OPTIONAL)
 
 add_dependencies(${PROJECT_NAME} ${MOD})
 

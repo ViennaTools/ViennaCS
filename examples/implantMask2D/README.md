@@ -237,11 +237,15 @@ For crystalline dual-Pearson entries, additional reshaping/tail suppression is a
 - Implicit solver: `annealImplicitMaxIterations`, `annealImplicitTolerance`
 - Dopant diffusion (constant): `annealDiffusionCoefficient`
 - Dopant diffusion (Arrhenius): `annealD0`, `annealEa`, `annealTemperature`
+- Anneal table lookup: `annealUseTableLookup`, `annealTablePath` (default: `data/AnnealData/AdvCal_2023.12.fps` in the package)
+  - Current lookup maps AdvCal `Si B Int D`, `Si Int Di`, `Si Vac Dv`, bulk I-V recombination surrogate, and Si ICluster (`Ikfi`, `Ikfc`, `Ikr`, `InitPercent`)
 - Temperature schedule keys: `annealStepDurations`, `annealTemperatures`, `annealRampTemperatures` (alias fallback in script)
 - Defect coupling enable: `annealDefectCoupling`
 - Defect labels: `annealDamageLabel`, `annealDamageLastImpLabel`, `annealInterstitialLabel`, `annealVacancyLabel`
 - Defect source and partition: `annealDefectFromDamageHistoryWeight`, `annealDefectFromDamageLastImpWeight`, `annealDefectToInterstitial`, `annealDefectToVacancy`
 - Defect transport and reactions: `annealInterstitialDiffusivity`, `annealVacancyDiffusivity`, `annealDefectRecombinationRate`, `annealInterstitialSinkRate`, `annealVacancySinkRate`
+- Interstitial clustering (one-moment surrogate): `annealDefectClustering`, `annealIClusterLabel`, `annealIClusterIkfi`, `annealIClusterIkfc`, `annealIClusterIkr`, `annealIClusterInitFraction`
+  - This mapping is experimental in the reduced ViennaCS defect model and is off by default.
 - TED coupling: `annealTEDCoefficient`, `annealTEDNormalization`
 
 ## 9. Output fields in `final.vtu`
@@ -256,6 +260,7 @@ Common fields:
 If defect-coupled anneal is enabled:
 - `Interstitial`
 - `Vacancy`
+- `ICluster` (when defect clustering is enabled and kinetics are nonzero)
 
 Units:
 - geometric lengths in this example are nm (because `setLengthUnitInCm(1e-7)`)
@@ -266,3 +271,4 @@ Units:
 - For robust TCAD calibration, prefer table-driven mode (`config_table.txt`) and keep manual moment mode for controlled experiments.
 - For large anneal timesteps, use `annealMode=implicit`.
 - Defect kinetics are stiff in `cm^-3` units. If `annealDefectRecombinationRate`, sink rates, or `annealDefectToInterstitial/Vacancy` are too large, `Interstitial/Vacancy` can collapse in high-damage regions and produce hollow/ring-like artifacts.
+- The AdvCal bulk I-V recombination term is much stiffer than this reduced model can use directly; the example applies a bounded surrogate default and prints both bounded and raw values.

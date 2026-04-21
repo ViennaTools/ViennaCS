@@ -498,6 +498,12 @@ template <int D> void bindAPI(py::module &module) {
       .def("setDefectReactionRates", &Anneal<T, D>::setDefectReactionRates)
       .def("setDefectEnhancedDiffusion",
            &Anneal<T, D>::setDefectEnhancedDiffusion)
+      .def("enableDefectClustering", &Anneal<T, D>::enableDefectClustering,
+           py::arg("enable") = true)
+      .def("setDefectClusterLabel", &Anneal<T, D>::setDefectClusterLabel)
+      .def("setDefectClusterKinetics", &Anneal<T, D>::setDefectClusterKinetics)
+      .def("setDefectClusterInitFraction",
+           &Anneal<T, D>::setDefectClusterInitFraction)
       .def("getEffectiveDiffusionCoefficient",
            &Anneal<T, D>::getEffectiveDiffusionCoefficient)
       .def("apply", &Anneal<T, D>::apply);

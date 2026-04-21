@@ -173,6 +173,25 @@ public:
     tedNormalization_ = std::max(normalization, NumericType(1e-30));
   }
 
+  void enableDefectClustering(const bool enable = true) {
+    defectClusteringEnabled_ = enable;
+  }
+
+  void setDefectClusterLabel(const std::string &clusterLabel) {
+    clusterLabel_ = clusterLabel;
+  }
+
+  void setDefectClusterKinetics(const NumericType ikfi, const NumericType ikfc,
+                                const NumericType ikr) {
+    ikfi_ = std::max(ikfi, NumericType(0));
+    ikfc_ = std::max(ikfc, NumericType(0));
+    ikr_ = std::max(ikr, NumericType(0));
+  }
+
+  void setDefectClusterInitFraction(const NumericType fraction) {
+    clusterInitFraction_ = std::clamp(fraction, NumericType(0), NumericType(1));
+  }
+
   NumericType getEffectiveDiffusionCoefficient() const {
     return getEffectiveDiffusionCoefficientAtTemperature(temperatureK_);
   }
@@ -234,21 +253,30 @@ public:
 
     std::vector<NumericType> *interstitial = nullptr;
     std::vector<NumericType> *vacancy = nullptr;
+    std::vector<NumericType> *cluster = nullptr;
     if (defectCouplingEnabled_) {
       cellSet_->addScalarData(interstitialLabel_, NumericType(0));
       cellSet_->addScalarData(vacancyLabel_, NumericType(0));
+      if (defectClusteringEnabled_) {
+        cellSet_->addScalarData(clusterLabel_, NumericType(0));
+      }
       interstitial = cellSet_->getScalarData(interstitialLabel_);
       vacancy = cellSet_->getScalarData(vacancyLabel_);
+      cluster = defectClusteringEnabled_ ? cellSet_->getScalarData(clusterLabel_)
+                                         : nullptr;
       concentration = cellSet_->getScalarData(speciesLabel_);
       materials = cellSet_->getScalarData(materialLabel_);
-      if (!interstitial || !vacancy || !concentration || !materials) {
+      if (!interstitial || !vacancy || !concentration || !materials ||
+          (defectClusteringEnabled_ && !cluster)) {
         Logger::getInstance()
             .addWarning(
                 "Defect-coupled anneal field setup failed. Proceeding without defect coupling.")
             .print();
         defectCouplingEnabled_ = false;
+        defectClusteringEnabled_ = false;
         interstitial = nullptr;
         vacancy = nullptr;
+        cluster = nullptr;
       }
 
       auto damage = cellSet_->getScalarData(damageLabel_);
@@ -260,8 +288,10 @@ public:
                         "' are missing. Proceeding without defect coupling.")
             .print();
         defectCouplingEnabled_ = false;
+        defectClusteringEnabled_ = false;
         interstitial = nullptr;
         vacancy = nullptr;
+        cluster = nullptr;
       } else {
 #pragma omp parallel for
         for (int i = 0; i < static_cast<int>(interstitial->size()); ++i) {
@@ -271,6 +301,12 @@ public:
           (*interstitial)[i] =
               std::max(NumericType(0), defectToInterstitial_ * source);
           (*vacancy)[i] = std::max(NumericType(0), defectToVacancy_ * source);
+          if (cluster != nullptr) {
+            const auto trapped =
+                clusterInitFraction_ * std::max((*interstitial)[i], NumericType(0));
+            (*cluster)[i] = trapped;
+            (*interstitial)[i] = std::max((*interstitial)[i] - trapped, NumericType(0));
+          }
         }
       }
     }
@@ -334,6 +370,18 @@ public:
             const auto recombination = recombinationRate_ * I * V;
             auto newI = I - dt * (recombination + interstitialSinkRate_ * I);
             auto newV = V - dt * (recombination + vacancySinkRate_ * V);
+            if (cluster != nullptr) {
+              const auto C = (*cluster)[i];
+              const auto capture = dt * (ikfi_ * std::max(newI, NumericType(0)) +
+                                         ikfc_ * std::max(newI, NumericType(0)) *
+                                                     std::max(C, NumericType(0)));
+              const auto release = dt * ikr_ * std::max(C, NumericType(0));
+              auto newC = C + capture - release;
+              newI = newI - capture + release;
+              if (clampNonNegative_)
+                newC = std::max(newC, NumericType(0));
+              (*cluster)[i] = newC;
+            }
             if (clampNonNegative_) {
               newI = std::max(newI, NumericType(0));
               newV = std::max(newV, NumericType(0));
@@ -531,6 +579,12 @@ private:
   NumericType vacancySinkRate_ = NumericType(0);
   NumericType tedCoefficient_ = NumericType(0);
   NumericType tedNormalization_ = NumericType(1e20);
+  bool defectClusteringEnabled_ = false;
+  std::string clusterLabel_ = "ICluster";
+  NumericType ikfi_ = NumericType(0);
+  NumericType ikfc_ = NumericType(0);
+  NumericType ikr_ = NumericType(0);
+  NumericType clusterInitFraction_ = NumericType(0);
 };
 
 } // namespace viennacs
