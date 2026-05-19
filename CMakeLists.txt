@@ -25,16 +25,15 @@ list(APPEND CMAKE_PREFIX_PATH ${VIENNACS_LOOKUP_DIRS})
 
 add_library(${PROJECT_NAME} INTERFACE)
 
-target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_17)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
 set_target_properties(
   ${PROJECT_NAME}
-  PROPERTIES CXX_STANDARD 17
+  PROPERTIES CXX_STANDARD 20
              CXX_EXTENSIONS OFF
              CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
   # https://learn.microsoft.com/cpp/c-runtime-library/math-constants
-  # TODO: In case C++20 is adpoted any time soon: https://cppreference.com/w/cpp/numeric/constants
   target_compile_definitions(${PROJECT_NAME} INTERFACE _USE_MATH_DEFINES=1)
 endif()
 
@@ -58,7 +57,8 @@ include("cmake/cpm.cmake")
 
 CPMAddPackage(
   NAME ViennaCore
-  VERSION 2.1.1
+  VERSION 2.1.2
+  GIT_TAG point-data
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaCore")
 
 CPMAddPackage(
@@ -70,12 +70,14 @@ CPMAddPackage(
 CPMFindPackage(
   NAME ViennaRay
   VERSION 4.1.1
+  GIT_TAG point-data
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaRay"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 
 CPMFindPackage(
   NAME ViennaLS
   VERSION 5.7.1
+  GIT_TAG point-data
   GIT_REPOSITORY "https://github.com/ViennaTools/ViennaLS"
   EXCLUDE_FROM_ALL ${VIENNACS_BUILD_PYTHON})
 

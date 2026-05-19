@@ -89,6 +89,7 @@ public:
         auto originAndDirection = mSource.getOriginAndDirection(idx, RngState);
         rayInternal::fillRayPosition(rayHit.ray, originAndDirection[0]);
         rayInternal::fillRayDirection<D>(rayHit.ray, originAndDirection[1]);
+        auto rayDirection = originAndDirection[1];
 
 #ifdef VIENNARAY_USE_RAY_MASKING
         rayHit.ray.mask = -1;
@@ -117,7 +118,7 @@ public:
 
           /* -------- Boundary hit -------- */
           if (rayHit.hit.geomID == boundaryID) {
-            mBoundary.processHit(rayHit, reflect);
+            mBoundary.processHit(rayHit, reflect, rayDirection);
             continue;
           }
 

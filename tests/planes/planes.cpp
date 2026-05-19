@@ -28,7 +28,7 @@ int main() {
                          ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
       .apply();
 
-  origin[D - 1] = 1.;
+  origin[D - 1] = 1.1;
   auto plane2 =
       ls::SmartPointer<ls::Domain<T, D>>::New(bounds, boundaryConds, gridDelta);
   ls::MakeGeometry<T, D>(plane2,

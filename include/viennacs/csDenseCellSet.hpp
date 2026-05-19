@@ -97,9 +97,9 @@ public:
 
     // prepare mesh for material ids and filling fractions
     cellGrid->cellData.insertNextScalarData(
-        typename viennals::PointData<T>::ScalarDataType(), "Material");
+        typename PointData<T>::ScalarDataType(), "Material");
     cellGrid->cellData.insertNextScalarData(
-        typename viennals::PointData<T>::ScalarDataType(), "FillingFraction");
+        typename PointData<T>::ScalarDataType(), "FillingFraction");
     auto &materialIds = *(cellGrid->cellData.getScalarData(0));
     auto &fillingFractions = *(cellGrid->cellData.getScalarData(1));
     const bool useMaterialMap = materialMap != nullptr;
@@ -294,15 +294,15 @@ public:
     return cellGrid->getCellData().getScalarData(name);
   }
 
-  std::vector<std::array<T, 3>> *
-  addVectorData(std::string name, std::array<T, 3> initValue = {0., 0., 0.}) {
+  std::vector<Vec3D<T>> *
+  addVectorData(std::string name, Vec3D<T> initValue = {0., 0., 0.}) {
     if (cellGrid->getCellData().getVectorData(name, false) != nullptr) {
       auto data = cellGrid->getCellData().getVectorData(name);
       data->resize(numberOfCells, initValue);
       std::fill(data->begin(), data->end(), initValue);
       return data;
     }
-    std::vector<std::array<T, 3>> newData(numberOfCells, initValue);
+    std::vector<Vec3D<T>> newData(numberOfCells, initValue);
     cellGrid->getCellData().insertNextVectorData(std::move(newData), name);
     return cellGrid->getCellData().getVectorData(name);
   }
@@ -378,7 +378,7 @@ public:
     return cellGrid->getCellData().getScalarData(name);
   }
 
-  std::vector<std::array<T, 3>> *getVectorData(std::string name) {
+  std::vector<Vec3D<T>> *getVectorData(std::string name) {
     return cellGrid->getCellData().getVectorData(name);
   }
 
@@ -416,7 +416,7 @@ public:
   }
 
   void setVectorData(std::string name,
-                     const std::vector<std::array<T, 3>> &newData) {
+                     const std::vector<Vec3D<T>> &newData) {
     if (newData.size() != this->getNumberOfCells()) {
       Logger::getInstance().addError("setVectorData: Size mismatch.").print();
       return;
