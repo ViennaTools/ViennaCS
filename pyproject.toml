@@ -15,4 +15,8 @@ Issues = "https://github.com/ViennaTools/ViennaCS/issues"
 
 [tool.scikit-build]
 build-dir = "build"
-cmake.args = ["-DVIENNACS_BUILD_PYTHON=ON"]
+cmake.args = [
+    "-DVIENNACS_BUILD_PYTHON=ON",
+    "-DVIENNACS_BUILD_EXAMPLES=OFF",
+    "-DVIENNACS_BUILD_TESTS=OFF",
+]

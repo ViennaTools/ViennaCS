@@ -1,0 +1,501 @@
+// apply the model to the geometry
+#pragma once
+
+#include "csImplantModel.hpp"
+#include <csDenseCellSet.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+#include <unordered_set>
+#include <vcLogger.hpp>
+
+namespace viennacs {
+
+using namespace viennacore;
+
+enum class ImplantDoseControl {
+  Off,
+  WaferDose,
+  BeamDose,
+};
+
+template <class NumericType, int D> class Implant {
+  SmartPointer<DenseCellSet<NumericType, D>> cellSet_;
+  SmartPointer<ImplantModel<NumericType, D>> model_;
+  SmartPointer<ImplantModel<NumericType, D>> damageModel_;
+  std::vector<int> maskMaterials;
+  std::vector<int> screenMaterials;
+  std::vector<int> voidMaterials = {0}; // material IDs treated as vacuum/air
+  NumericType angle_ = NumericType(0);
+  NumericType dosePerCm2_ = NumericType(0);
+  NumericType lengthUnitInCm_ = NumericType(1e-7);
+  ImplantDoseControl doseControl_ = ImplantDoseControl::Off;
+  bool writeBeamHits_ = false;
+  bool outputConcentrationInCm3_ = false;
+  NumericType damageFactor_ = NumericType(1);
+  std::string concentrationLabel_ = "concentration";
+  std::string beamHitsLabel_ = "beamHits";
+  std::string damageLabel_ = "Damage";
+  std::string lastDamageLabel_ = "Damage_Last";
+
+public:
+  Implant() = default;
+
+  void setCellSet(SmartPointer<DenseCellSet<NumericType, D>> passedCellSet) {
+    cellSet_ = passedCellSet;
+  }
+
+  void setImplantAngle(const NumericType angle) { angle_ = angle; }
+
+  void setDose(const NumericType dosePerCm2) { dosePerCm2_ = dosePerCm2; }
+
+  void setLengthUnitInCm(const NumericType lengthUnitInCm) {
+    lengthUnitInCm_ = lengthUnitInCm;
+  }
+
+  void setDoseControl(const ImplantDoseControl doseControl) {
+    doseControl_ = doseControl;
+  }
+
+  void enableBeamHits(const bool enable = true) { writeBeamHits_ = enable; }
+
+  void setConcentrationLabel(const std::string &label) {
+    concentrationLabel_ = label;
+  }
+
+  void setBeamHitsLabel(const std::string &label) { beamHitsLabel_ = label; }
+
+  void setDamageLabel(const std::string &label) { damageLabel_ = label; }
+
+  void setLastDamageLabel(const std::string &label) {
+    lastDamageLabel_ = label;
+  }
+
+  void setDamageFactor(const NumericType factor) {
+    damageFactor_ = std::max(factor, NumericType(0));
+  }
+
+  void setOutputConcentrationInCm3(const bool enable = true) {
+    outputConcentrationInCm3_ = enable;
+  }
+
+  void setImplantModel(
+      SmartPointer<ImplantModel<NumericType, D>> passedImplantModel) {
+    model_ = passedImplantModel;
+  }
+
+  void
+  setDamageModel(SmartPointer<ImplantModel<NumericType, D>> passedDamageModel) {
+    damageModel_ = passedDamageModel;
+  }
+
+  template <class... Mats> void setMaskMaterials(Mats... mats) {
+    maskMaterials = {mats...};
+  }
+  void setMaskMaterials(const std::vector<int> &mats) { maskMaterials = mats; }
+
+  template <class... Mats> void setScreenMaterials(Mats... mats) {
+    screenMaterials = {mats...};
+  }
+  void setScreenMaterials(const std::vector<int> &mats) {
+    screenMaterials = mats;
+  }
+
+  // Override the material IDs treated as vacuum/void (default: {0}).
+  // Set this to match the cell set's cover material when using ViennaPS
+  // domains.
+  void setVoidMaterials(const std::vector<int> &mats) { voidMaterials = mats; }
+  void setVoidMaterial(int mat) { voidMaterials = {mat}; }
+
+  void apply() {
+    if (!model_) {
+      Logger::getInstance()
+          .addWarning("No implant model passed to Implant.")
+          .print();
+      return;
+    }
+
+    if (!cellSet_) {
+      Logger::getInstance().addWarning("No cellSet passed to Implant.").print();
+      return;
+    }
+
+    // now we apply the implant model to the cell set
+    auto boundingBox = cellSet_->getBoundingBox();
+    auto gridDelta = cellSet_->getGridDelta();
+    auto concentration = cellSet_->getCellGrid()->getCellData().getScalarData(
+        concentrationLabel_, true);
+    if (!concentration)
+      cellSet_->addScalarData(concentrationLabel_, 0.);
+    if (writeBeamHits_)
+      cellSet_->addScalarData(beamHitsLabel_, 0.);
+    std::vector<NumericType> *damage = nullptr;
+    std::vector<NumericType> *lastDamage = nullptr;
+    if (damageModel_) {
+      damage = cellSet_->getCellGrid()->getCellData().getScalarData(
+          damageLabel_, true);
+      if (!damage)
+        cellSet_->addScalarData(damageLabel_, 0.);
+      cellSet_->addScalarData(lastDamageLabel_, 0.);
+    }
+    concentration = cellSet_->getScalarData(concentrationLabel_);
+    auto beamHits =
+        writeBeamHits_ ? cellSet_->getScalarData(beamHitsLabel_) : nullptr;
+    damage = damageModel_ ? cellSet_->getScalarData(damageLabel_) : nullptr;
+    lastDamage =
+        damageModel_ ? cellSet_->getScalarData(lastDamageLabel_) : nullptr;
+    auto material = cellSet_->getScalarData("Material");
+    if (!material) {
+      Logger::getInstance()
+          .addWarning("Implant material data 'Material' not found.")
+          .print();
+      return;
+    }
+
+    const NumericType minX = boundingBox[0][0];
+    const NumericType maxX = boundingBox[1][0];
+    const NumericType minY = boundingBox[0][1];
+    const NumericType maxY = boundingBox[1][1];
+    const NumericType minZ = boundingBox[0][2];
+    const NumericType maxZ = boundingBox[1][2];
+
+    NumericType xLength = std::abs(maxX - minX);
+    NumericType yLength = std::abs(maxY - minY);
+    NumericType zLength = std::abs(maxZ - minZ);
+
+    int numberOfcellsXdirection = xLength / gridDelta;
+    int numberOfcellsYdirection = yLength / gridDelta;
+    int numberOfcellsZdirection = zLength / gridDelta;
+
+    double radians = angle_ * M_PI / 180;
+
+    const auto maxDepthModel =
+        damageModel_
+            ? std::max(model_->getMaxDepth(), damageModel_->getMaxDepth())
+            : model_->getMaxDepth();
+    const auto maxLateralModel =
+        damageModel_ ? std::max(model_->getMaxLateralRange(),
+                                damageModel_->getMaxLateralRange())
+                     : model_->getMaxLateralRange();
+    const auto relevant_Cells = std::max(
+        1, static_cast<int>(std::ceil(maxDepthModel /
+                                      std::max(gridDelta, NumericType(1e-9)))));
+    const auto relevant_lateral_Cells = std::max(
+        1, static_cast<int>(std::ceil(
+               2.0 * maxLateralModel /
+               (std::max(static_cast<NumericType>(std::abs(std::cos(radians))),
+                         NumericType(0.01)) *
+                std::max(gridDelta, NumericType(1e-9))))));
+    const std::unordered_set<int> voidMaterialSet(voidMaterials.begin(),
+                                                  voidMaterials.end());
+    const std::unordered_set<int> maskMaterialSet(maskMaterials.begin(),
+                                                  maskMaterials.end());
+    const std::unordered_set<int> screenMaterialSet(screenMaterials.begin(),
+                                                    screenMaterials.end());
+
+    NumericType doseWeight = NumericType(1);
+    if (doseControl_ != ImplantDoseControl::Off &&
+        dosePerCm2_ > NumericType(0)) {
+      auto effectiveDosePerCm2 = dosePerCm2_;
+      if (doseControl_ == ImplantDoseControl::BeamDose) {
+        effectiveDosePerCm2 *= std::max(NumericType(0), std::cos(radians));
+      }
+      const auto dosePerLengthUnitsSquared =
+          effectiveDosePerCm2 * lengthUnitInCm_ * lengthUnitInCm_;
+      NumericType beamMeasure = gridDelta;
+      if constexpr (D == 3)
+        beamMeasure *= gridDelta;
+      doseWeight = dosePerLengthUnitsSquared * beamMeasure;
+    }
+
+    if constexpr (D == 3) {
+      // iterate over all the beams that hit the xy-plane from the z direction:
+      int paddingCellsX =
+          std::ceil(zLength * std::abs(std::tan(radians)) / gridDelta) + 5;
+      NumericType padX = paddingCellsX * gridDelta + xLength;
+      for (int i = -paddingCellsX; i < numberOfcellsXdirection + paddingCellsX;
+           i++) {
+        for (int h = 0; h < numberOfcellsYdirection; h++) {
+          NumericType initialX = minX + i * gridDelta + gridDelta;
+          NumericType initialY = minY + h * gridDelta + gridDelta;
+          NumericType initialZ = maxZ - gridDelta;
+          std::array<NumericType, 3> initialCoords{initialX, initialY,
+                                                   initialZ};
+          int initialIndex;
+          numberOfcellsZdirection = zLength / gridDelta;
+          while (true) {
+            initialCoords[0] = initialX;
+            initialCoords[1] = initialY;
+            initialCoords[2] = initialZ;
+            initialIndex = cellSet_->getIndex(initialCoords);
+            if (initialIndex == -1) {
+              initialZ -= gridDelta * std::cos(radians);
+              initialX -= gridDelta * std::sin(radians);
+              numberOfcellsZdirection -= 1;
+              if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
+                break;
+              }
+              continue;
+            } else {
+              const auto materialId =
+                  static_cast<int>((*material)[initialIndex]);
+              if (voidMaterialSet.count(materialId) > 0) {
+                initialZ -= gridDelta * std::cos(radians);
+                initialX -= gridDelta * std::sin(radians);
+                numberOfcellsZdirection -= 1;
+                if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                    initialX > maxX + padX) {
+                  break;
+                }
+                continue;
+              }
+              if (maskMaterialSet.count(materialId) > 0) {
+                break;
+              }
+              if (screenMaterialSet.count(materialId) > 0) {
+                initialZ -= gridDelta * std::cos(radians);
+                initialX -= gridDelta * std::sin(radians);
+                numberOfcellsZdirection -= 1;
+                if (initialZ < minZ - gridDelta || initialX < minX - padX ||
+                    initialX > maxX + padX) {
+                  break;
+                }
+                continue;
+              }
+              // Sub-grid surface correction: find the along-beam distance from
+              // the entry point to the actual level-set surface, using the
+              // boundary point normal for accuracy on oblique surfaces.
+              // t_surf = (P_bp - P_entry)·n̂ / (b̂·n̂)  (ray-plane intersection)
+              // depth = zCord/cos(θ) - t_surf
+              NumericType surfaceAlongBeam = NumericType(0);
+              if (cellSet_->hasEmbeddedBoundaries()) {
+                constexpr unsigned zPlusFace = 2u * 2u + 1u;
+                const int bpId =
+                    cellSet_->getFaceBoundaryPointId(initialIndex, zPlusFace);
+                if (bpId >= 0) {
+                  const auto &bp =
+                      cellSet_->getEmbeddedBoundaryPoints()[bpId];
+                  // Beam direction in 3D: (sin θ, 0, -cos θ) — tilt in xz plane
+                  const NumericType bDotN =
+                      std::sin(radians) * bp.normal[0] +
+                      NumericType(0) * bp.normal[1] +
+                      (-std::cos(radians)) * bp.normal[2];
+                  if (std::abs(bDotN) > NumericType(1e-6)) {
+                    const NumericType entryDotN =
+                        (bp.coordinate[0] - initialX) * bp.normal[0] +
+                        (bp.coordinate[1] - initialY) * bp.normal[1] +
+                        (bp.coordinate[2] - initialZ) * bp.normal[2];
+                    surfaceAlongBeam = entryDotN / bDotN;
+                  }
+                }
+              }
+
+              // iterate over all the cells in y [z] direction (depth), and
+              // then iterate over all the cells in x [&y] direction to get
+              // the lateral displacement
+              int paddingZ = std::ceil(maxLateralModel *
+                                       std::abs(std::sin(radians)) / gridDelta);
+              for (int j = -paddingZ; j < relevant_Cells + paddingZ + 1; j++) {
+                NumericType zCord = j * gridDelta;
+                int shiftK =
+                    std::round((zCord * std::tan(radians)) / gridDelta);
+                for (int k = 0; k < relevant_lateral_Cells + 1; k++) {
+                  NumericType xCord = initialX + (k - shiftK) * gridDelta;
+                  for (int l = 0; l < relevant_lateral_Cells + 1; l++) {
+                    NumericType yCord = initialY + l * gridDelta;
+                    NumericType shifted_xCord =
+                        xCord - (relevant_lateral_Cells * gridDelta) / 2;
+                    NumericType shifted_yCord =
+                        yCord - (relevant_lateral_Cells * gridDelta) / 2;
+                    NumericType shifted_zCord = initialZ - zCord;
+                    NumericType depth =
+                        zCord /
+                            std::max(static_cast<NumericType>(
+                                         std::abs(std::cos(radians))),
+                                     NumericType(0.01)) -
+                        surfaceAlongBeam;
+                    NumericType lateralDisplacement =
+                        std::sqrt(std::pow((std::cos(radians) *
+                                                (initialX - shifted_xCord) -
+                                            std::sin(radians) * zCord),
+                                           2) +
+                                  std::pow(initialY - shifted_yCord, 2));
+                    std::array<NumericType, 3> coords{
+                        shifted_xCord, shifted_yCord, shifted_zCord};
+                    auto index = cellSet_->getIndex(coords);
+                    if (index != -1) {
+                      const auto contribution =
+                          doseWeight *
+                          model_->getProfile(depth, lateralDisplacement);
+                      (*concentration)[index] += contribution;
+                      if (lastDamage != nullptr) {
+                        (*lastDamage)[index] +=
+                            doseWeight * damageModel_->getProfile(
+                                             depth, lateralDisplacement);
+                      }
+                      if (beamHits != nullptr &&
+                          contribution > NumericType(0)) {
+                        if (lateralDisplacement <= gridDelta) {
+                          (*beamHits)[index] = NumericType(1);
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      // iterate over all the beams that hit the x-plane from the y direction:
+      int paddingCellsX =
+          std::ceil(yLength * std::abs(std::tan(radians)) / gridDelta) + 5;
+      NumericType padX = paddingCellsX * gridDelta + xLength;
+      for (int i = -paddingCellsX; i < numberOfcellsXdirection + paddingCellsX;
+           i++) {
+        NumericType initialX = minX + i * gridDelta + gridDelta;
+        NumericType initialY = maxY - gridDelta;
+        std::array<NumericType, 3> initialCoords{initialX, initialY, 0};
+        int initialIndex;
+        numberOfcellsYdirection = yLength / gridDelta;
+        while (true) {
+          // Clamp lateral coordinate for boundary lookups to simulate infinite
+          // extension
+          initialCoords[0] = std::max(minX + gridDelta / 2,
+                                      std::min(initialX, maxX - gridDelta / 2));
+          initialCoords[1] = initialY;
+          initialIndex = cellSet_->getIndex(initialCoords);
+          if (initialIndex == -1) {
+            initialY -= gridDelta * std::cos(radians);
+            initialX += gridDelta * std::sin(radians);
+            numberOfcellsYdirection -= 1;
+            if (initialY < minY - gridDelta || initialX < minX - padX ||
+                initialX > maxX + padX) {
+              break;
+            }
+            continue;
+          } else {
+            const auto materialId = static_cast<int>((*material)[initialIndex]);
+            if (voidMaterialSet.count(materialId) > 0) {
+              initialY -= gridDelta * std::cos(radians);
+              initialX += gridDelta * std::sin(radians);
+              numberOfcellsYdirection -= 1;
+              if (initialY < minY - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
+                break;
+              }
+              continue;
+            }
+            if (maskMaterialSet.count(materialId) > 0) {
+              break;
+            }
+            if (screenMaterialSet.count(materialId) > 0) {
+              initialY -= gridDelta * std::cos(radians);
+              initialX += gridDelta * std::sin(radians);
+              numberOfcellsYdirection -= 1;
+              if (initialY < minY - gridDelta || initialX < minX - padX ||
+                  initialX > maxX + padX) {
+                break;
+              }
+              continue;
+            }
+
+            // Sub-grid surface correction: find the along-beam distance from
+            // the entry point to the actual level-set surface, using the
+            // boundary point normal for accuracy on oblique surfaces.
+            // t_surf = (P_bp - P_entry)·n̂ / (b̂·n̂)  (ray-plane intersection)
+            // depth = yCord/cos(θ) - t_surf
+            NumericType surfaceAlongBeam = NumericType(0);
+            if (cellSet_->hasEmbeddedBoundaries()) {
+              constexpr unsigned yPlusFace = 1u * 2u + 1u;
+              const int bpId =
+                  cellSet_->getFaceBoundaryPointId(initialIndex, yPlusFace);
+              if (bpId >= 0) {
+                const auto &bp =
+                    cellSet_->getEmbeddedBoundaryPoints()[bpId];
+                // Beam direction in 2D: (sin θ, -cos θ)
+                const NumericType bDotN =
+                    std::sin(radians) * bp.normal[0] +
+                    (-std::cos(radians)) * bp.normal[1];
+                if (std::abs(bDotN) > NumericType(1e-6)) {
+                  const NumericType entryDotN =
+                      (bp.coordinate[0] - initialX) * bp.normal[0] +
+                      (bp.coordinate[1] - initialY) * bp.normal[1];
+                  surfaceAlongBeam = entryDotN / bDotN;
+                }
+              }
+            }
+
+            // iterate over all the cells in y direction (depth), and then
+            // iterate over all the cells in x direction to get the lateral
+            // displacement
+            int paddingY = std::ceil(maxLateralModel *
+                                     std::abs(std::sin(radians)) / gridDelta);
+            for (int j = -paddingY; j < relevant_Cells + paddingY + 1; j++) {
+              NumericType yCord = j * gridDelta;
+              int shiftK = std::round((yCord * std::tan(radians)) / gridDelta);
+              for (int k = 0; k < relevant_lateral_Cells + 1; k++) {
+                NumericType xCord = initialX + (k + shiftK) * gridDelta;
+                NumericType shifted_xCord =
+                    xCord - (relevant_lateral_Cells * gridDelta) / 2;
+                NumericType shifted_yCord = initialY - yCord;
+                NumericType depth =
+                    yCord /
+                        std::max(static_cast<NumericType>(
+                                     std::abs(std::cos(radians))),
+                                 NumericType(0.01)) -
+                    surfaceAlongBeam;
+                NumericType lateralDisplacement =
+                    std::abs(std::cos(radians) * (shifted_xCord - initialX) -
+                             std::sin(radians) * yCord);
+                std::array<NumericType, 3> coords{shifted_xCord, shifted_yCord,
+                                                  0};
+                auto index = cellSet_->getIndex(coords);
+                if (index != -1) {
+                  const auto contribution =
+                      doseWeight *
+                      model_->getProfile(depth, lateralDisplacement);
+                  (*concentration)[index] += contribution;
+                  if (lastDamage != nullptr) {
+                    (*lastDamage)[index] +=
+                        doseWeight *
+                        damageModel_->getProfile(depth, lateralDisplacement);
+                  }
+                  if (beamHits != nullptr && contribution > NumericType(0)) {
+                    if (lateralDisplacement <= gridDelta) {
+                      (*beamHits)[index] = NumericType(1);
+                    }
+                  }
+                }
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    if (outputConcentrationInCm3_) {
+      const auto scale =
+          NumericType(1) /
+          std::pow(std::max(lengthUnitInCm_, NumericType(1e-30)), 3);
+      for (auto &value : *concentration)
+        value *= scale;
+      if (lastDamage != nullptr) {
+        for (auto &value : *lastDamage)
+          value *= scale;
+      }
+    }
+
+    if (lastDamage != nullptr && damage != nullptr) {
+      for (size_t i = 0; i < damage->size(); ++i) {
+        (*damage)[i] += damageFactor_ * (*lastDamage)[i];
+      }
+    }
+  }
+};
+} // namespace viennacs
