@@ -13,7 +13,12 @@
 #include <vcUtil.hpp>
 #include <vcVectorType.hpp>
 
+#include <algorithm>
+#include <array>
 #include <bitset>
+#include <cmath>
+#include <limits>
+#include <vector>
 
 namespace viennacs {
 
@@ -29,6 +34,23 @@ private:
   using levelSetsType = std::vector<SmartPointer<viennals::Domain<T, D>>>;
   using materialMapType = SmartPointer<viennals::MaterialMap>;
 
+public:
+  struct EmbeddedBoundaryPoint {
+    Vec3D<T> coordinate{0., 0., 0.};
+    // Normal points from negativeMaterial into positiveMaterial.
+    Vec3D<T> normal{0., 0., 0.};
+    // Boundary points lie on the zero contour by construction.
+    T signedDistance = 0.;
+    T edgeFraction = 0.;
+    unsigned levelSetIndex = 0;
+    int negativeMaterial = -1;
+    int positiveMaterial = -1;
+    int adjacentCell = -1;
+    // Cartesian axis of the cell edge on which this point was generated.
+    int axis = -1;
+  };
+
+private:
   levelSetsType levelSets;
   gridType cellGrid = nullptr;
   SmartPointer<viennals::Domain<T, D>> surface = nullptr;
@@ -46,6 +68,16 @@ private:
   bool cellSetAboveSurface = false;
   int coverMaterial = -1;
   std::bitset<D> periodicBoundary;
+  bool embeddedBoundariesEnabled_ = false;
+  std::vector<EmbeddedBoundaryPoint> embeddedBoundaryPoints;
+  std::vector<std::vector<unsigned>> cellEmbeddedBoundaryPointIds;
+  // Per-cell, per-face index into embeddedBoundaryPoints (-1 = no boundary).
+  // faceIdx encoding: axis*2 + (offset>0 ? 1 : 0).
+  std::vector<std::array<int, 2 * D>> cellFaceBoundaryPointId;
+  // Raw (unclamped) distance from cell center to boundary point on that face.
+  std::vector<std::array<T, 2 * D>> cellFaceBoundaryDistance;
+  // Minimum raw face-boundary distance across all cells (set by buildFaceBoundaryCache).
+  T minFaceBoundaryDistance_ = std::numeric_limits<T>::max();
 
   std::vector<T> *fillingFractions_;
   const T eps = 1e-4;
@@ -65,9 +97,18 @@ public:
                      T passedDepth = 0.) {
     levelSets = passedLevelSets;
     materialMap = passedMaterialMap;
+    embeddedBoundaryPoints.clear();
+    cellEmbeddedBoundaryPointIds.clear();
+    cellFaceBoundaryPointId.clear();
+    cellFaceBoundaryDistance.clear();
+    cellNeighbors.clear();
+    numberOfCells = 0;
+    fillingFractions_ = nullptr;
 
     if (cellGrid == nullptr)
       cellGrid = SmartPointer<viennals::Mesh<T>>::New();
+    else
+      cellGrid->clear();
 
     if (surface == nullptr)
       surface = SmartPointer<viennals::Domain<T, D>>::New(levelSets.back());
@@ -115,6 +156,18 @@ public:
     // needed
     for (; iterators.front().getIndices() < maxIndex;
          iterators.front().next()) {
+      std::vector<EmbeddedBoundaryPoint> pendingBoundaryPoints;
+      if (embeddedBoundariesEnabled_) {
+        for (unsigned levelSetIndex = 0; levelSetIndex < iterators.size();
+             ++levelSetIndex) {
+          auto &boundaryIt = iterators[levelSetIndex];
+          boundaryIt.goToIndicesSequential(iterators.front().getIndices());
+          collectEmbeddedBoundaryPoints(boundaryIt, levelSetIndex,
+                                        pendingBoundaryPoints);
+        }
+        estimateSegmentNormals(pendingBoundaryPoints);
+      }
+
       // go over all materials
       for (unsigned materialId = 0; materialId < levelSetsInOrder.size();
            ++materialId) {
@@ -160,7 +213,7 @@ public:
           if (addVoxel) {
             int material = materialId;
             if (useMaterialMap)
-              material = indexToMaterial(materialId, materialMap);
+              material = indexToMaterial(materialId);
 
             if constexpr (D == 3) {
               // reorder elements for hexas to be ordered correctly
@@ -175,6 +228,22 @@ public:
             }
             materialIds.push_back(material);
             fillingFractions.push_back(std::max(1., centerValue));
+            if (embeddedBoundariesEnabled_) {
+              const auto cellIdx =
+                  static_cast<int>(cellGrid->template getElements<(1 << D)>()
+                                       .size() -
+                                   1);
+              std::vector<unsigned> boundaryPointIds;
+              boundaryPointIds.reserve(pendingBoundaryPoints.size());
+              for (auto &point : pendingBoundaryPoints) {
+                point.adjacentCell = cellIdx;
+                boundaryPointIds.push_back(
+                    static_cast<unsigned>(embeddedBoundaryPoints.size()));
+                embeddedBoundaryPoints.push_back(point);
+              }
+              cellEmbeddedBoundaryPointIds.push_back(
+                  std::move(boundaryPointIds));
+            }
           }
           // jump out of material for loop
           break;
@@ -217,6 +286,10 @@ public:
 
     // create filling fractions as default scalar cell data
     numberOfCells = cellGrid->template getElements<(1 << D)>().size();
+    cellEmbeddedBoundaryPointIds.resize(numberOfCells);
+
+    if (embeddedBoundariesEnabled_)
+      buildFaceBoundaryCache();
 
     // calculate number of BVH layers
     for (unsigned i = 0; i < D; ++i) {
@@ -255,7 +328,7 @@ public:
   }
 
   std::vector<T> *addScalarData(std::string name, T initValue = 0.) {
-    if (cellGrid->getCellData().getScalarData(name, false) != nullptr) {
+    if (cellGrid->getCellData().getScalarData(name, true) != nullptr) {
       auto data = cellGrid->getCellData().getScalarData(name);
       data->resize(numberOfCells, initValue);
       std::fill(data->begin(), data->end(), initValue);
@@ -265,7 +338,7 @@ public:
     cellGrid->getCellData().insertNextScalarData(std::move(newData), name);
     fillingFractions_ =
         cellGrid->getCellData().getScalarData("FillingFraction");
-    return cellGrid->getCellData().getScalarData(name);
+    return cellGrid->getCellData().getScalarData(name, true);
   }
 
   std::vector<std::array<T, 3>> *
@@ -356,10 +429,6 @@ public:
     return cellGrid->getCellData().getVectorData(name);
   }
 
-  // --------------------------------------------------------------------------
-  // ADD TO PUBLIC SECTION OF csDenseCellSet.hpp
-  // --------------------------------------------------------------------------
-
   void setScalarData(std::string name, const std::vector<T> &newData) {
     // 1. Check size
     if (newData.size() != this->getNumberOfCells()) {
@@ -430,7 +499,65 @@ public:
     coverMaterial = passedCoverMaterial;
   }
 
+  int getCoverMaterial() const { return coverMaterial; }
+
   bool getCellSetPosition() const { return cellSetAboveSurface; }
+
+  void enableEmbeddedBoundaries(const bool enable = true) {
+    embeddedBoundariesEnabled_ = enable;
+  }
+
+  bool hasEmbeddedBoundaries() const {
+    return embeddedBoundariesEnabled_ && !embeddedBoundaryPoints.empty();
+  }
+
+  bool embeddedBoundariesEnabled() const {
+    return embeddedBoundariesEnabled_;
+  }
+
+  std::size_t numEmbeddedBoundaryPoints() const {
+    return embeddedBoundaryPoints.size();
+  }
+
+  const std::vector<EmbeddedBoundaryPoint> &
+  getEmbeddedBoundaryPoints() const {
+    return embeddedBoundaryPoints;
+  }
+
+  const std::vector<unsigned> &
+  getEmbeddedBoundaryPointIds(const unsigned long cellIdx) const {
+    assert(cellIdx < cellEmbeddedBoundaryPointIds.size() &&
+           "Cell idx out of bounds");
+    return cellEmbeddedBoundaryPointIds[cellIdx];
+  }
+
+  bool hasEmbeddedBoundaryPoints(const unsigned long cellIdx) const {
+    return !getEmbeddedBoundaryPointIds(cellIdx).empty();
+  }
+
+  /// Index into getEmbeddedBoundaryPoints() for the boundary point on
+  /// face faceIdx (axis*2 + (offset>0 ? 1 : 0)) of cellIdx, or -1 if none.
+  int getFaceBoundaryPointId(std::size_t cellIdx, unsigned faceIdx) const {
+    if (cellFaceBoundaryPointId.empty())
+      return -1;
+    return cellFaceBoundaryPointId[cellIdx][faceIdx];
+  }
+
+  /// Raw (unclamped) distance from the cell center to the boundary point on
+  /// face faceIdx of cellIdx. Returns gridDelta/2 when no point exists.
+  T getFaceBoundaryDistance(std::size_t cellIdx, unsigned faceIdx) const {
+    if (cellFaceBoundaryDistance.empty())
+      return gridDelta * T(0.5);
+    return cellFaceBoundaryDistance[cellIdx][faceIdx];
+  }
+
+  /// Minimum raw face-boundary distance across all cells.
+  /// Returns gridDelta/2 when no embedded boundaries are present.
+  T getMinFaceBoundaryDistance() const {
+    if (minFaceBoundaryDistance_ == std::numeric_limits<T>::max())
+      return gridDelta * T(0.5);
+    return minFaceBoundaryDistance_;
+  }
 
   // Sets the filling fraction at given cell index.
   bool setFillingFraction(const int idx, const T fill) {
@@ -614,12 +741,7 @@ public:
           }
 
           if (isVoxel) {
-            if (matMapPtr) {
-              materialIds->at(cellIdx++) =
-                  indexToMaterial(materialId, matMapPtr);
-            } else {
-              materialIds->at(cellIdx++) = materialId;
-            }
+            materialIds->at(cellIdx++) = indexToMaterial(materialId);
           }
 
           // jump out of material for loop
@@ -792,6 +914,171 @@ public:
   }
 
 private:
+  void buildFaceBoundaryCache() {
+    std::array<int, 2 * D> noPoint;
+    noPoint.fill(-1);
+    std::array<T, 2 * D> halfCell;
+    halfCell.fill(gridDelta * T(0.5));
+    cellFaceBoundaryPointId.assign(numberOfCells, noPoint);
+    cellFaceBoundaryDistance.assign(numberOfCells, halfCell);
+    minFaceBoundaryDistance_ = std::numeric_limits<T>::max();
+
+    for (std::size_t cellId = 0; cellId < numberOfCells; ++cellId) {
+      if (!hasEmbeddedBoundaryPoints(cellId))
+        continue;
+      const auto center = getCellCenter(cellId);
+      for (const auto pointId : cellEmbeddedBoundaryPointIds[cellId]) {
+        const auto &pt = embeddedBoundaryPoints[pointId];
+        const unsigned axis = static_cast<unsigned>(pt.axis);
+        const T delta = pt.coordinate[axis] - center[axis];
+        const unsigned faceIdx = axis * 2u + (delta > T(0) ? 1u : 0u);
+        const T dist = std::abs(delta);
+        // Keep the closest boundary point per face when multiple exist.
+        if (cellFaceBoundaryPointId[cellId][faceIdx] < 0 ||
+            dist < cellFaceBoundaryDistance[cellId][faceIdx]) {
+          cellFaceBoundaryPointId[cellId][faceIdx] = static_cast<int>(pointId);
+          cellFaceBoundaryDistance[cellId][faceIdx] = dist;
+        }
+        if (dist < minFaceBoundaryDistance_)
+          minFaceBoundaryDistance_ = dist;
+      }
+    }
+  }
+
+  template <typename CellIterator>
+  void collectEmbeddedBoundaryPoints(
+      CellIterator &cellIt, const unsigned levelSetIndex,
+      std::vector<EmbeddedBoundaryPoint> &cellBoundaryPoints) {
+    std::array<T, 1 << D> values{};
+    for (unsigned corner = 0; corner < (1 << D); ++corner)
+      values[corner] = cellIt.getCorner(corner).getValue();
+
+    const auto normal = estimateCellNormal(cellIt, values);
+    for (unsigned corner = 0; corner < (1 << D); ++corner) {
+      const auto &offset0 = cellIt.getCorner(corner).getOffset();
+      for (unsigned neighbor = corner + 1; neighbor < (1 << D); ++neighbor) {
+        const auto &offset1 = cellIt.getCorner(neighbor).getOffset();
+        int axis = -1;
+        int offsetDifference = 0;
+        for (int dim = 0; dim < D; ++dim) {
+          const int diff = offset1[dim] - offset0[dim];
+          if (std::abs(diff) > 1) {
+            offsetDifference = 2;
+            break;
+          }
+          if (diff != 0) {
+            axis = dim;
+            ++offsetDifference;
+          }
+        }
+        if (offsetDifference != 1)
+          continue;
+
+        const T v0 = values[corner];
+        const T v1 = values[neighbor];
+        if (!edgeCrossesInterface(v0, v1))
+          continue;
+
+        const T denom = v0 - v1;
+        T fraction = T(0.5);
+        if (std::abs(denom) > std::numeric_limits<T>::epsilon())
+          fraction = std::clamp(v0 / denom, T(0), T(1));
+
+        EmbeddedBoundaryPoint point;
+        point.normal = normal;
+        point.edgeFraction = fraction;
+        point.levelSetIndex = levelSetIndex;
+        point.negativeMaterial =
+            indexToMaterial(static_cast<int>(levelSetIndex));
+        point.positiveMaterial =
+            indexToMaterial(static_cast<int>(levelSetIndex) + 1);
+        point.axis = axis;
+        for (int dim = 0; dim < D; ++dim) {
+          const T p0 = gridDelta * (cellIt.getIndices(dim) + offset0[dim]);
+          const T p1 = gridDelta * (cellIt.getIndices(dim) + offset1[dim]);
+          point.coordinate[dim] = p0 + fraction * (p1 - p0);
+        }
+        cellBoundaryPoints.push_back(point);
+      }
+    }
+  }
+
+  static bool edgeCrossesInterface(const T v0, const T v1) {
+    if (std::abs(v0) <= std::numeric_limits<T>::epsilon() &&
+        std::abs(v1) <= std::numeric_limits<T>::epsilon())
+      return false;
+    return (v0 <= T(0) && v1 > T(0)) || (v0 > T(0) && v1 <= T(0));
+  }
+
+  template <typename CellIterator>
+  static Vec3D<T> estimateCellNormal(
+      CellIterator &cellIt, const std::array<T, 1 << D> &values) {
+    Vec3D<T> normal{0., 0., 0.};
+    std::array<T, D> meanOffset{};
+    for (unsigned corner = 0; corner < (1 << D); ++corner) {
+      const auto &offset = cellIt.getCorner(corner).getOffset();
+      for (int axis = 0; axis < D; ++axis)
+        meanOffset[axis] += static_cast<T>(offset[axis]);
+    }
+    for (int axis = 0; axis < D; ++axis)
+      meanOffset[axis] /= static_cast<T>(1 << D);
+
+    for (unsigned corner = 0; corner < (1 << D); ++corner) {
+      const auto &offset = cellIt.getCorner(corner).getOffset();
+      for (int axis = 0; axis < D; ++axis) {
+        normal[axis] +=
+            values[corner] * (static_cast<T>(offset[axis]) - meanOffset[axis]);
+      }
+    }
+
+    T norm2 = 0.;
+    for (int axis = 0; axis < D; ++axis)
+      norm2 += normal[axis] * normal[axis];
+    if (norm2 <= std::numeric_limits<T>::epsilon())
+      return normal;
+    const T invNorm = T(1) / std::sqrt(norm2);
+    for (int axis = 0; axis < D; ++axis)
+      normal[axis] *= invNorm;
+    return normal;
+  }
+
+  static void
+  estimateSegmentNormals(std::vector<EmbeddedBoundaryPoint> &boundaryPoints) {
+    if constexpr (D != 2) {
+      (void)boundaryPoints;
+      return;
+    } else {
+      for (std::size_t i = 0; i < boundaryPoints.size(); ++i) {
+        auto &first = boundaryPoints[i];
+        for (std::size_t j = i + 1; j < boundaryPoints.size(); ++j) {
+          auto &second = boundaryPoints[j];
+          if (first.levelSetIndex != second.levelSetIndex)
+            continue;
+
+          Vec3D<T> tangent{second.coordinate[0] - first.coordinate[0],
+                           second.coordinate[1] - first.coordinate[1], 0.};
+          const T tangentNorm2 =
+              tangent[0] * tangent[0] + tangent[1] * tangent[1];
+          if (tangentNorm2 <= std::numeric_limits<T>::epsilon())
+            continue;
+
+          Vec3D<T> normal{-tangent[1], tangent[0], 0.};
+          const T invNorm = T(1) / std::sqrt(tangentNorm2);
+          normal[0] *= invNorm;
+          normal[1] *= invNorm;
+
+          if (first.normal[0] * normal[0] + first.normal[1] * normal[1] <
+              T(0)) {
+            normal[0] = -normal[0];
+            normal[1] = -normal[1];
+          }
+          first.normal = normal;
+          second.normal = normal;
+        }
+      }
+    }
+  }
+
   int findIndex(const Vec3D<T> &point) const {
     const auto &elems = cellGrid->template getElements<(1 << D)>();
     const auto &nodes = cellGrid->getNodes();
@@ -812,22 +1099,21 @@ private:
   void adjustMaterialIds() {
     // This assumes the current material IDs correspond to the level-set index
     auto matIds = getScalarData("Material");
-    if (!materialMap)
-      return;
 
 #pragma omp parallel for
     for (int i = 0; i < matIds->size(); i++) {
-      matIds->at(i) =
-          indexToMaterial(static_cast<int>(matIds->at(i)), materialMap);
+      matIds->at(i) = indexToMaterial(static_cast<int>(matIds->at(i)));
     }
   }
 
-  int indexToMaterial(int index, const materialMapType &materialMap) {
+  int indexToMaterial(int index) {
     // This takes into account the added coverMaterial layer
     if (!cellSetAboveSurface)
       --index;
-    if (index >= 0 && index < materialMap->getNumberOfLayers())
-      return materialMap->getMaterialId(index);
+    if (materialMap) {
+      if (index >= 0 && index < materialMap->getNumberOfLayers())
+        return materialMap->getMaterialId(index);
+    }
     return coverMaterial;
   }
 
