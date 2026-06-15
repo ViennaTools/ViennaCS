@@ -727,14 +727,19 @@ private:
       return;
     if (!cellSet_) return;
 
+    // Guard: species and material fields must already exist.
+    if (!cellSet_->getScalarData(speciesLabel_) ||
+        !cellSet_->getScalarData(materialLabel_))
+      return;
+
+    // Create the active field first — addScalarData may reallocate the
+    // internal scalar-data container, invalidating any pointers obtained before
+    // the call.  Fetch all working pointers only after this point.
+    cellSet_->addScalarData(activeLabel_, NumericType(0));
+
     auto *concentration = cellSet_->getScalarData(speciesLabel_);
     auto *materials     = cellSet_->getScalarData(materialLabel_);
-    if (!concentration || !materials) return;
-
-    auto *cellData = &cellSet_->getCellGrid()->getCellData();
-    if (cellData->getScalarData(activeLabel_, true) == nullptr)
-      cellSet_->addScalarData(activeLabel_, NumericType(0));
-    auto *active = cellSet_->getScalarData(activeLabel_);
+    auto *active        = cellSet_->getScalarData(activeLabel_);
 
     // Rebuild the material filter sets (same logic as apply()).
     const auto diffusionMaterialsSet = std::unordered_set<int>(

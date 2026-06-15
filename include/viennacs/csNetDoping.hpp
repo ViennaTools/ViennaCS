@@ -103,6 +103,12 @@ public:
 
         const int n = static_cast<int>(cellSet_->getNumberOfCells());
 
+        // Create or reset the output field first — addScalarData may reallocate
+        // the internal scalar-data container, which would invalidate any pointers
+        // collected before the call.
+        cellSet_->addScalarData(outputLabel_, NumericType(0));
+
+        // Collect donor/acceptor pointers after any potential reallocation.
         std::vector<const std::vector<NumericType> *> donors, acceptors;
         for (const auto &lbl : donorLabels_) {
             if (auto *d = cellSet_->getScalarData(lbl))
@@ -112,13 +118,6 @@ public:
             if (auto *d = cellSet_->getScalarData(lbl))
                 acceptors.push_back(d);
         }
-
-        // Create or reset the output field.
-        if (!cellSet_->getCellGrid()->getCellData().getScalarData(
-                outputLabel_, true))
-            cellSet_->addScalarData(outputLabel_, NumericType(0));
-        else
-            cellSet_->addScalarData(outputLabel_, NumericType(0)); // reset to 0
 
         auto *out = cellSet_->getScalarData(outputLabel_);
 

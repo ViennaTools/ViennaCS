@@ -8,6 +8,32 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
 
   module.def("setNumThreads", &omp_set_num_threads);
 
+  // BoundaryConditionType and BoundaryCondition are dimension-independent;
+  // register them here rather than inside bindAPI<D> to avoid pybind11's
+  // global-registry "already registered" error on the second bindAPI call.
+  py::enum_<BoundaryConditionType>(module, "BoundaryConditionType")
+      .value("Neumann", BoundaryConditionType::Neumann)
+      .value("Dirichlet", BoundaryConditionType::Dirichlet)
+      .value("Robin", BoundaryConditionType::Robin)
+      .export_values();
+
+  py::class_<BoundaryCondition<T>>(module, "BoundaryCondition")
+      .def(py::init<>())
+      .def_readwrite("type", &BoundaryCondition<T>::type)
+      .def_readwrite("value", &BoundaryCondition<T>::value)
+      .def_readwrite("transferCoefficient",
+                     &BoundaryCondition<T>::transferCoefficient)
+      .def_static("dirichlet", &BoundaryCondition<T>::dirichlet,
+                  py::arg("boundaryValue"),
+                  "Create a Dirichlet condition with the given surface value.")
+      .def_static("neumann", &BoundaryCondition<T>::neumann,
+                  py::arg("outwardFlux") = T(0),
+                  "Create a Neumann condition with the given outward flux "
+                  "(default 0 = zero flux).")
+      .def_static("robin", &BoundaryCondition<T>::robin,
+                  py::arg("transfer"), py::arg("exteriorValue"),
+                  "Create a Robin condition: flux = transfer*(c - exteriorValue).");
+
   py::enum_<ImplantDoseControl>(module, "ImplantDoseControl")
       .value("Off", ImplantDoseControl::Off)
       .value("WaferDose", ImplantDoseControl::WaferDose)
@@ -15,8 +41,7 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
 
   py::enum_<DiffusionSolverMode>(module, "DiffusionSolverMode")
       .value("Explicit", DiffusionSolverMode::Explicit)
-      .value("GaussSeidel", DiffusionSolverMode::GaussSeidel)
-      .value("Implicit", DiffusionSolverMode::GaussSeidel);
+      .value("GaussSeidel", DiffusionSolverMode::GaussSeidel);
 
   auto m2 = module.def_submodule("d2", "2D bindings");
   m2.attr("__name__") = "viennacs.d2";

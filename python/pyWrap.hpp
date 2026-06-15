@@ -43,30 +43,6 @@ namespace py = pybind11;
 PYBIND11_DECLARE_HOLDER_TYPE(Types, SmartPointer<Types>)
 
 template <int D> void bindAPI(py::module &module) {
-  // BoundaryConditionType enum
-  py::enum_<BoundaryConditionType>(module, "BoundaryConditionType")
-      .value("Neumann", BoundaryConditionType::Neumann)
-      .value("Dirichlet", BoundaryConditionType::Dirichlet)
-      .value("Robin", BoundaryConditionType::Robin)
-      .export_values();
-
-  // BoundaryCondition struct
-  py::class_<BoundaryCondition<T>>(module, "BoundaryCondition")
-      .def(py::init<>())
-      .def_readwrite("type", &BoundaryCondition<T>::type)
-      .def_readwrite("value", &BoundaryCondition<T>::value)
-      .def_readwrite("transferCoefficient",
-                     &BoundaryCondition<T>::transferCoefficient)
-      .def_static("dirichlet", &BoundaryCondition<T>::dirichlet,
-                  py::arg("boundaryValue"),
-                  "Create a Dirichlet condition with the given surface value.")
-      .def_static("neumann", &BoundaryCondition<T>::neumann,
-                  py::arg("outwardFlux") = T(0),
-                  "Create a Neumann condition with the given outward flux "
-                  "(default 0 = zero flux).")
-      .def_static("robin", &BoundaryCondition<T>::robin,
-                  py::arg("transfer"), py::arg("exteriorValue"),
-                  "Create a Robin condition: flux = transfer*(c - exteriorValue).");
 
   // EmbeddedBoundaryPoint struct (read-only; produced by DenseCellSet)
   using EBP = typename DenseCellSet<T, D>::EmbeddedBoundaryPoint;
@@ -352,6 +328,18 @@ template <int D> void bindAPI(py::module &module) {
           },
           py::arg("materials"),
           "Set the material IDs to be treated as screen/cap materials.")
+      .def(
+          "setVoidMaterials",
+          [](Implant<T, D> &implant, const std::vector<int> &materials) {
+            implant.setVoidMaterials(materials);
+          },
+          py::arg("materials"),
+          "Set material IDs treated as vacuum/void (beam passes through). "
+          "Default: {0}.")
+      .def("setVoidMaterial", &Implant<T, D>::setVoidMaterial,
+           py::arg("material"),
+           "Set a single material ID treated as vacuum/void (beam passes "
+           "through). Default: 0.")
       .def("apply", &Implant<T, D>::apply);
 
   py::class_<typename Anneal<T, D>::DefectDiagnosticsRow>(
