@@ -29,7 +29,9 @@
 #include <csImplant.hpp>
 #include <csImplantModel.hpp>
 #include <csMeanFreePath.hpp>
+#include <csNetDoping.hpp>
 #include <csSegmentCells.hpp>
+#include <csSheetResistance.hpp>
 #include <csVersion.hpp>
 
 using namespace viennacs;
@@ -466,5 +468,121 @@ template <int D> void bindAPI(py::module &module) {
       .def("clearSourceField",
            &Anneal<T, D>::clearSourceField,
            "Remove any previously set concentration source field.")
-      .def("apply", &Anneal<T, D>::apply);
+      .def("apply", &Anneal<T, D>::apply)
+      .def("applyActivation", &Anneal<T, D>::applyActivation,
+           "Apply only the solid-activation model (C_active = C_SS·C/(C_SS+C)) "
+           "without running the diffusion solver.  Equivalent to Sentaurus "
+           "'diffuse time=0'.  Requires setCellSet(), enableSolidActivation(), "
+           "and setSolidSolubilityArrhenius() to be configured first.");
+
+  // ── SheetResistance ─────────────────────────────────────────────────────────
+  py::class_<SheetResistance<T, D>>(module, "SheetResistance",
+      "Compute sheet resistance (Rsh, Ω/□) from a concentration field stored in\n"
+      "a DenseCellSet.\n\n"
+      "Default configuration targets ViennaPS nm-unit domains:\n"
+      "  length unit = 1e-7 (nm → cm),  conc unit = 1e21 (nm⁻³ → cm⁻³),\n"
+      "  depth axis  = D−1  (y for 2-D, z for 3-D),\n"
+      "  surface position = 0  (depth = surface − coordinate).\n\n"
+      "Example::\n\n"
+      "  sr = SheetResistance()\n"
+      "  sr.setCellSet(domain.getCellSet())\n"
+      "  sr.setConcentrationLabel(\"P_active\")\n"
+      "  rsh = sr.computeElectron()   # Masetti n-type (P in Si)")
+      .def(py::init<>())
+      .def("setCellSet", &SheetResistance<T, D>::setCellSet,
+           py::arg("cellSet"),
+           "Attach the DenseCellSet to analyse.")
+      .def("setConcentrationLabel",
+           &SheetResistance<T, D>::setConcentrationLabel,
+           py::arg("label"),
+           "Name of the scalar field holding the active concentration "
+           "(default: 'active_concentration').")
+      .def("setDepthAxis", &SheetResistance<T, D>::setDepthAxis,
+           py::arg("axis"),
+           "Cell-centre axis index for depth  (default: D−1).")
+      .def("setSurfacePosition",
+           &SheetResistance<T, D>::setSurfacePosition,
+           py::arg("surfacePosition"),
+           "Wafer-surface coordinate along the depth axis. Depth is computed "
+           "as surfacePosition minus the cell-centre coordinate.")
+      .def("setLengthUnit", &SheetResistance<T, D>::setLengthUnit,
+           py::arg("lu_cm"),
+           "Conversion factor from domain length unit to cm "
+           "(default: 1e-7 for nm domains). "
+           "Also updates the concentration unit to stay consistent.")
+      .def("setConcentrationUnit",
+           &SheetResistance<T, D>::setConcentrationUnit,
+           py::arg("unit"),
+           "Multiplicative factor to convert the cell-set concentration to "
+           "cm⁻³ (default: 1e21 for nm⁻³ fields).")
+      .def("computeElectron", &SheetResistance<T, D>::computeElectron,
+           "Rsh [Ω/□] using the Masetti-Severi electron mobility model "
+           "(n-type, e.g. P-doped Si).")
+      .def("computeHole", &SheetResistance<T, D>::computeHole,
+           "Rsh [Ω/□] using the Masetti-Severi hole mobility model "
+           "(p-type, e.g. B-doped Si).");
+
+  // ── NetDoping ────────────────────────────────────────────────────────────────
+  py::class_<NetDoping<T, D>>(module, "NetDoping",
+      "Compute net doping (Σ donors − Σ acceptors) and extract the\n"
+      "metallurgical junction depth from a DenseCellSet.\n\n"
+      "Donor and acceptor labels typically refer to active-concentration\n"
+      "fields written by the Anneal solid-activation model (e.g. 'P_active',\n"
+      "'B_active'), but total-concentration fields work too.\n\n"
+      "Example::\n\n"
+      "  nd = NetDoping()\n"
+      "  nd.setCellSet(domain.getCellSet())\n"
+      "  nd.addDonorLabel('P_active')\n"
+      "  nd.addAcceptorLabel('B_active')\n"
+      "  nd.apply()                      # writes 'net_doping' field\n"
+      "  xj = nd.junctionDepth()         # nm from surface")
+      .def(py::init<>())
+      .def("setCellSet", &NetDoping<T, D>::setCellSet,
+           py::arg("cellSet"),
+           "Attach the DenseCellSet to analyse.")
+      .def("addDonorLabel", &NetDoping<T, D>::addDonorLabel,
+           py::arg("label"),
+           "Append one donor (n-type) concentration field name.")
+      .def("addAcceptorLabel", &NetDoping<T, D>::addAcceptorLabel,
+           py::arg("label"),
+           "Append one acceptor (p-type) concentration field name.")
+      .def("setDonorLabels", &NetDoping<T, D>::setDonorLabels,
+           py::arg("labels"),
+           "Replace the donor label list.")
+      .def("setAcceptorLabels", &NetDoping<T, D>::setAcceptorLabels,
+           py::arg("labels"),
+           "Replace the acceptor label list.")
+      .def("setOutputLabel", &NetDoping<T, D>::setOutputLabel,
+           py::arg("label"),
+           "Name of the output scalar field (default: 'net_doping').")
+      .def("setDepthAxis", &NetDoping<T, D>::setDepthAxis,
+           py::arg("axis"),
+           "Cell-centre axis index for depth (default: D−1).")
+      .def("setSurfacePosition", &NetDoping<T, D>::setSurfacePosition,
+           py::arg("surfacePosition"),
+           "Wafer-surface coordinate along the depth axis. Depth is computed "
+           "as surfacePosition minus the cell-centre coordinate.")
+      .def("apply", &NetDoping<T, D>::apply,
+           "Compute net_doping = Σ donors − Σ acceptors and write to the "
+           "output field.")
+      .def("junctionDepth", &NetDoping<T, D>::junctionDepth,
+           "Shallowest depth [domain length units] where net_doping changes "
+           "sign.  Returns inf if no junction exists.")
+      .def("junctionDepths", &NetDoping<T, D>::junctionDepths,
+           "All junction depths [domain length units], sorted ascending.  "
+           "Useful for retrograde profiles with multiple sign changes.")
+      .def("junctionCount", &NetDoping<T, D>::junctionCount,
+           "Number of metallurgical junctions (net_doping sign changes).")
+      .def("lateralJunctionPosition",
+           &NetDoping<T, D>::lateralJunctionPosition,
+           py::arg("atDepth"),
+           "Shallowest lateral position [domain length units] where net_doping "
+           "changes sign at the given depth.  Use for vertical (lateral) PN "
+           "junctions where P and B are implanted side by side.  Returns inf "
+           "if no lateral junction exists at that depth.")
+      .def("lateralJunctionPositions",
+           &NetDoping<T, D>::lateralJunctionPositions,
+           py::arg("atDepth"),
+           "All lateral junction positions at the given depth, sorted "
+           "ascending.");
 }

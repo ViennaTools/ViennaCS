@@ -1,5 +1,7 @@
 #include <csAnneal.hpp>
 #include <csDenseCellSet.hpp>
+#include <csNetDoping.hpp>
+#include <csSheetResistance.hpp>
 
 #include <lsBooleanOperation.hpp>
 #include <lsMakeGeometry.hpp>
@@ -35,6 +37,41 @@ makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
 
   auto bottom = makePlane(0.);
   auto top = makePlane(subH);
+  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
+
+  auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
+  matMap->insertNextMaterial(1);
+  matMap->insertNextMaterial(1);
+
+  std::vector<ls::SmartPointer<ls::Domain<T, D>>> levelSets = {bottom, top};
+
+  auto cellSet = cs::SmartPointer<cs::DenseCellSet<T, D>>::New();
+  cellSet->setCellSetPosition(true);
+  cellSet->setCoverMaterial(2);
+  cellSet->fromLevelSets(levelSets, matMap, topSpace);
+  return cellSet;
+}
+
+cs::SmartPointer<cs::DenseCellSet<T, D>>
+makeNegativeYSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
+  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -subH, topSpace};
+  ls::BoundaryConditionEnum bc[D] = {ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+                                     ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+  T origin[D] = {};
+  T normal[D] = {};
+  normal[D - 1] = 1.;
+
+  auto makePlane = [&](T y) {
+    origin[D - 1] = y;
+    auto levelSet = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
+    ls::MakeGeometry<T, D>(
+        levelSet, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+        .apply();
+    return levelSet;
+  };
+
+  auto bottom = makePlane(-subH);
+  auto top = makePlane(0.);
   ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
@@ -190,8 +227,67 @@ void testTemperatureSchedule() {
   VC_TEST_ASSERT(nSub > 0);
 }
 
+void testSheetResistanceUsesPositiveDepth() {
+  auto cellSet = makeNegativeYSlabCellSet(1.0, 6.0, 6.0, 1.0);
+  cellSet->addScalarData("active", 0.);
+  auto active = cellSet->getScalarData("active");
+  auto mats = cellSet->getScalarData("Material");
+
+  int substrateCells = 0;
+  for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
+    if (static_cast<int>((*mats)[i]) != 1) continue;
+    const T depth = -cellSet->getCellCenter(i)[D - 1];
+    if (depth < T(0)) continue;
+    (*active)[i] = T(1e-3); // nm^-3 = 1e18 cm^-3
+    ++substrateCells;
+  }
+  VC_TEST_ASSERT(substrateCells > 1);
+
+  cs::SheetResistance<T, D> sr;
+  sr.setCellSet(cellSet);
+  sr.setConcentrationLabel("active");
+  sr.setSurfacePosition(0.);
+  const T rsh = sr.computeElectron();
+  VC_TEST_ASSERT(std::isfinite(rsh));
+  VC_TEST_ASSERT(rsh > T(0));
+}
+
+void testNetDopingUsesPositiveDepth() {
+  auto cellSet = makeNegativeYSlabCellSet(1.0, 6.0, 8.0, 1.0);
+  cellSet->addScalarData("donor", 0.);
+  cellSet->addScalarData("acceptor", 0.);
+  auto donor = cellSet->getScalarData("donor");
+  auto acceptor = cellSet->getScalarData("acceptor");
+  auto mats = cellSet->getScalarData("Material");
+
+  int substrateCells = 0;
+  for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
+    if (static_cast<int>((*mats)[i]) != 1) continue;
+    const T depth = -cellSet->getCellCenter(i)[D - 1];
+    if (depth < T(0)) continue;
+    (*donor)[i] = depth < T(3) ? T(2) : T(0);
+    (*acceptor)[i] = T(1);
+    ++substrateCells;
+  }
+  VC_TEST_ASSERT(substrateCells > 1);
+
+  cs::NetDoping<T, D> nd;
+  nd.setCellSet(cellSet);
+  nd.addDonorLabel("donor");
+  nd.addAcceptorLabel("acceptor");
+  nd.setSurfacePosition(0.);
+  nd.apply();
+
+  const T junction = nd.junctionDepth();
+  VC_TEST_ASSERT(std::isfinite(junction));
+  VC_TEST_ASSERT(junction > T(0));
+  VC_TEST_ASSERT(junction < T(8));
+}
+
 int main() {
   testDiffusionSpreads();
   testSolidActivation();
   testTemperatureSchedule();
+  testSheetResistanceUsesPositiveDepth();
+  testNetDopingUsesPositiveDepth();
 }

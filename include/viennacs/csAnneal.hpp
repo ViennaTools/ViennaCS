@@ -694,30 +694,78 @@ public:
     }
 
     // --- Solid activation model ---
-    // C_active = C_SS * C_total / (C_SS + C_total)
-    // Written to a separate field; total concentration continues to diffuse.
-    if (activationEnabled_ && solidSolubilityC0_ > NumericType(0)) {
-      auto *cellData = &cellSet_->getCellGrid()->getCellData();
-      if (cellData->getScalarData(activeLabel_, true) == nullptr)
-        cellSet_->addScalarData(activeLabel_, NumericType(0));
-      auto *active = cellSet_->getScalarData(activeLabel_);
-      concentration = cellSet_->getScalarData(speciesLabel_);
-      materials = cellSet_->getScalarData(materialLabel_);
+    applyActivationImpl_();
+  }
 
-      // Use the user-set peak temperature for Arrhenius activation.
-      const auto C_SS = evalArrhenius(solidSolubilityC0_, solidSolubilityEa_eV_,
-                                      temperatureK_);
+public:
+  // Apply only the solid-activation model (C_active = C_SS·C / (C_SS+C))
+  // without running the diffusion solver.  Equivalent to Sentaurus
+  // "diffuse time=0": updates the active-concentration field so that
+  // SheetResistance and NetDoping see a valid activation state immediately
+  // after implantation, before any thermal anneal.
+  //
+  // Prerequisites: setCellSet() must have been called, and
+  //   enableSolidActivation(true) + setSolidSolubilityArrhenius(C0, Ea)
+  //   must have been configured.
+  void applyActivation() {
+    if (!cellSet_) {
+      Logger::getInstance()
+          .addWarning("Anneal::applyActivation: no cell set attached — "
+                      "call setCellSet() first.")
+          .print();
+      return;
+    }
+    applyActivationImpl_();
+  }
+
+private:
+  // Shared implementation for apply() and applyActivation().
+  // Re-builds the material filter locally so it can be called independently
+  // of the diffusion solver context.
+  void applyActivationImpl_() {
+    if (!activationEnabled_ || solidSolubilityC0_ <= NumericType(0))
+      return;
+    if (!cellSet_) return;
+
+    auto *concentration = cellSet_->getScalarData(speciesLabel_);
+    auto *materials     = cellSet_->getScalarData(materialLabel_);
+    if (!concentration || !materials) return;
+
+    auto *cellData = &cellSet_->getCellGrid()->getCellData();
+    if (cellData->getScalarData(activeLabel_, true) == nullptr)
+      cellSet_->addScalarData(activeLabel_, NumericType(0));
+    auto *active = cellSet_->getScalarData(activeLabel_);
+
+    // Rebuild the material filter sets (same logic as apply()).
+    const auto diffusionMaterialsSet = std::unordered_set<int>(
+        diffusionMaterials_.begin(), diffusionMaterials_.end());
+    const auto blockingMaterialsSet = std::unordered_set<int>(
+        blockingMaterials_.begin(), blockingMaterials_.end());
+
+    auto isDiffusiveMaterial = [&](int mat) {
+      return diffusionMaterialsSet.empty() ||
+             diffusionMaterialsSet.count(mat) > 0;
+    };
+    auto isBlockedMaterial = [&](int mat) {
+      return blockingMaterialsSet.count(mat) > 0;
+    };
+
+    // Use the configured temperature (or peak temperature for a schedule).
+    const NumericType T =
+        temperatureSchedule_.empty()
+            ? temperatureK_
+            : temperatureSchedule_.back().endTemperatureK;
+    const auto C_SS = evalArrhenius(solidSolubilityC0_, solidSolubilityEa_eV_, T);
 
 #pragma omp parallel for
-      for (int i = 0; i < static_cast<int>(concentration->size()); ++i) {
-        const auto mat = static_cast<int>((*materials)[i]);
-        if (!isDiffusiveMaterial(mat) || isBlockedMaterial(mat)) {
-          (*active)[i] = NumericType(0);
-          continue;
-        }
-        const auto C = std::max((*concentration)[i], NumericType(0));
-        (*active)[i] = (C_SS > NumericType(0)) ? (C_SS * C / (C_SS + C)) : C;
+    for (int i = 0; i < static_cast<int>(concentration->size()); ++i) {
+      const auto mat = static_cast<int>((*materials)[i]);
+      if (!isDiffusiveMaterial(mat) || isBlockedMaterial(mat)) {
+        (*active)[i] = NumericType(0);
+        continue;
       }
+      const auto C = std::max((*concentration)[i], NumericType(0));
+      (*active)[i] = (C_SS > NumericType(0)) ? (C_SS * C / (C_SS + C)) : C;
     }
   }
 
