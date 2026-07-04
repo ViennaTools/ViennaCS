@@ -26,6 +26,7 @@ template <class NumericType, int D> class Implant {
   SmartPointer<ImplantModel<NumericType, D>> damageModel_;
   std::vector<int> maskMaterials;
   std::vector<int> screenMaterials;
+  std::vector<int> targetMaterials; // if non-empty, only these receive dopant
   std::vector<int> voidMaterials = {0}; // material IDs treated as vacuum/air
   NumericType angle_ = NumericType(0);
   NumericType dosePerCm2_ = NumericType(0);
@@ -100,6 +101,13 @@ public:
   }
   void setScreenMaterials(const std::vector<int> &mats) {
     screenMaterials = mats;
+  }
+
+  template <class... Mats> void setTargetMaterials(Mats... mats) {
+    targetMaterials = {mats...};
+  }
+  void setTargetMaterials(const std::vector<int> &mats) {
+    targetMaterials = mats;
   }
 
   // Override the material IDs treated as vacuum/void (default: {0}).
@@ -193,6 +201,8 @@ public:
                                                   maskMaterials.end());
     const std::unordered_set<int> screenMaterialSet(screenMaterials.begin(),
                                                     screenMaterials.end());
+    const std::unordered_set<int> targetMaterialSet(targetMaterials.begin(),
+                                                    targetMaterials.end());
 
     NumericType doseWeight = NumericType(1);
     if (doseControl_ != ImplantDoseControl::Off &&
@@ -326,6 +336,10 @@ public:
                         shifted_xCord, shifted_yCord, shifted_zCord};
                     auto index = cellSet_->getIndex(coords);
                     if (index != -1) {
+                      if (!targetMaterialSet.empty() &&
+                          targetMaterialSet.count(
+                              static_cast<int>((*material)[index])) == 0)
+                        continue;
                       const auto contribution =
                           doseWeight *
                           model_->getProfile(depth, lateralDisplacement);
@@ -456,6 +470,10 @@ public:
                                                   0};
                 auto index = cellSet_->getIndex(coords);
                 if (index != -1) {
+                  if (!targetMaterialSet.empty() &&
+                      targetMaterialSet.count(
+                          static_cast<int>((*material)[index])) == 0)
+                    continue;
                   const auto contribution =
                       doseWeight *
                       model_->getProfile(depth, lateralDisplacement);
