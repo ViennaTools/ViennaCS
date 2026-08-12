@@ -159,5 +159,5 @@ def setNumThreads(arg0: typing.SupportsInt) -> None:
 Dirichlet: BoundaryConditionType  # value = <BoundaryConditionType.Dirichlet: 1>
 Neumann: BoundaryConditionType  # value = <BoundaryConditionType.Neumann: 0>
 Robin: BoundaryConditionType  # value = <BoundaryConditionType.Robin: 2>
-__version__: str = '2.0.1'
-version: str = '2.0.1'
+__version__: str = '2.1.0'
+version: str = '2.1.0'
