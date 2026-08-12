@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
+#include "csBoundaryDiffusionSolver.hpp"
 #include "csDenseCellSet.hpp"
 #include "csDiffusionSolver.hpp"
-#include "csBoundaryDiffusionSolver.hpp"
 #include <vcLogger.hpp>
 
 namespace viennacs {
@@ -53,8 +53,8 @@ public:
   /// Boundary condition applied at embedded level-set surfaces when the cell
   /// set has embedded boundaries enabled. Default: zero-flux Neumann (dopant
   /// does not evaporate through the free surface).
-  void setSurfaceBoundaryCondition(
-      const BoundaryCondition<NumericType> &condition) {
+  void
+  setSurfaceBoundaryCondition(const BoundaryCondition<NumericType> &condition) {
     surfaceBoundaryCondition_ = condition;
   }
 
@@ -113,12 +113,12 @@ public:
   // Electrically-active dopant fraction from the local implant-damage field:
   //   f_active = f_floor + (1 - f_floor)·(1 - exp(-(damage/D_amorph)^beta))
   // Amorphizing regions (damage >> D_amorph) regrow by solid-phase epitaxy →
-  // full substitutional incorporation (f_active→1); sub-amorphizing (crystalline)
-  // regions stay boron-interstitial-cluster limited at the floor f_floor. The
-  // dose dependence is thus spatially resolved from the damage field rather than
-  // supplied per condition. Composes multiplicatively with the solid-solubility
-  // cap when both are enabled. Requires the damage field (setDamageLabels) to be
-  // present on the cell set.
+  // full substitutional incorporation (f_active→1); sub-amorphizing
+  // (crystalline) regions stay boron-interstitial-cluster limited at the floor
+  // f_floor. The dose dependence is thus spatially resolved from the damage
+  // field rather than supplied per condition. Composes multiplicatively with
+  // the solid-solubility cap when both are enabled. Requires the damage field
+  // (setDamageLabels) to be present on the cell set.
   void enableDamageActivation(const bool enable = true) {
     damageActivationEnabled_ = enable;
   }
@@ -144,15 +144,15 @@ public:
     amorphLayerFillEnabled_ = enable;
   }
 
-  // ── Interface segregation of the dopant ─────────────────────────────────────
-  // Dopant flux J = v_seg·C into blocking materials (oxide) at material
-  // interfaces: boron segregates into SiO2 (segregation coefficient < 1), so
-  // the Si depletes next to the interface.  Applied volumetrically to the
-  // interface-adjacent cell: dC/dt = −v_seg·n_faces·C/dx, integrated as an
-  // exponential decay (unconditionally stable).  v_seg in [length]/s using the
-  // same length unit as the grid.
+  // ── Interface segregation of the dopant
+  // ───────────────────────────────────── Dopant flux J = v_seg·C into blocking
+  // materials (oxide) at material interfaces: boron segregates into SiO2
+  // (segregation coefficient < 1), so the Si depletes next to the interface.
+  // Applied volumetrically to the interface-adjacent cell: dC/dt =
+  // −v_seg·n_faces·C/dx, integrated as an exponential decay (unconditionally
+  // stable).  v_seg in [length]/s using the same length unit as the grid.
   void setInterfaceSegregation(const NumericType velocity,
-                              const NumericType width = NumericType(0)) {
+                               const NumericType width = NumericType(0)) {
     segregationVelocity_ = std::max(velocity, NumericType(0));
     segWidth_ = width;
   }
@@ -163,7 +163,8 @@ public:
   // be treated differently even though both are SiO2 by giving the BOX its own
   // material label.
   void setTrapMaterials(const std::vector<int> &materials) {
-    trapMaterials_ = std::unordered_set<int>(materials.begin(), materials.end());
+    trapMaterials_ =
+        std::unordered_set<int>(materials.begin(), materials.end());
     ifDistTrap_.clear();
   }
   void setSegregationMaterials(const std::vector<int> &materials) {
@@ -171,18 +172,18 @@ public:
     ifDistSeg_.clear();
   }
 
-  // ── Interface trapping of the dopant ────────────────────────────────────────
-  // Dopant capture J = v_trap·C at interface-adjacent cells into an immobile
-  // companion field (label below): boron piles up at Si/SiO2 interfaces during
-  // RTA ("interfacial pile-up" / dose loss in the USJ literature) — trapped,
-  // electrically inactive, but still visible to SIMS.  Unlike segregation the
-  // dose is conserved: SIMS-comparable profile = mobile + trapped.
-  // width ≤ 0: capture only in interface-adjacent cells (surface-flux form,
-  // dC/dt = −v·n_faces·C/dx).  width > 0: capture distributed over a
-  // near-interface band, dC/dt = −(v/w)·exp(−d/w)·C with d the distance to
-  // the nearest blocking interface — same integrated capture strength, but
-  // the pile-up develops the ~w-wide shoulder seen in SIMS instead of a
-  // single-cell delta.
+  // ── Interface trapping of the dopant
+  // ──────────────────────────────────────── Dopant capture J = v_trap·C at
+  // interface-adjacent cells into an immobile companion field (label below):
+  // boron piles up at Si/SiO2 interfaces during RTA ("interfacial pile-up" /
+  // dose loss in the USJ literature) — trapped, electrically inactive, but
+  // still visible to SIMS.  Unlike segregation the dose is conserved:
+  // SIMS-comparable profile = mobile + trapped. width ≤ 0: capture only in
+  // interface-adjacent cells (surface-flux form, dC/dt = −v·n_faces·C/dx).
+  // width > 0: capture distributed over a near-interface band, dC/dt =
+  // −(v/w)·exp(−d/w)·C with d the distance to the nearest blocking interface —
+  // same integrated capture strength, but the pile-up develops the ~w-wide
+  // shoulder seen in SIMS instead of a single-cell delta.
   void setInterfaceTrap(const NumericType velocity,
                         const NumericType width = NumericType(0)) {
     trapVelocity_ = std::max(velocity, NumericType(0));
@@ -339,7 +340,7 @@ public:
   }
 
   void setDefectPartitionFactors(const NumericType interstitialFactor,
-                                           const NumericType vacancyFactor) {
+                                 const NumericType vacancyFactor) {
     const auto i = std::max(interstitialFactor, NumericType(0));
     const auto v = std::max(vacancyFactor, NumericType(0));
     const auto sum = i + v;
@@ -390,9 +391,7 @@ public:
     equilibriumArrhEnabled_ = true;
   }
 
-  void clearEquilibriumArrhenius() {
-    equilibriumArrhEnabled_ = false;
-  }
+  void clearEquilibriumArrhenius() { equilibriumArrhEnabled_ = false; }
 
   void setDefectEnhancedDiffusion(const NumericType tedCoefficient,
                                   const NumericType normalization) {
@@ -400,10 +399,18 @@ public:
     tedNormalization_ = std::max(normalization, NumericType(1e-30));
   }
 
-  void setTEDFromDamageFactor(
-      const NumericType damageFactor,
-      const NumericType coefficientScale = NumericType(0.5),
-      const NumericType normalization = NumericType(1e20)) {
+  // Instantaneous effective TED: D_eff = D*(1 + factor*damage/norm), driven by
+  // the static implant-damage field (no dynamic defect solver). Bounded/stable.
+  void setStaticDamageTED(const NumericType factor,
+                          const NumericType normalization) {
+    tedStaticFactor_ = std::max(factor, NumericType(0));
+    tedStaticNorm_ = std::max(normalization, NumericType(1e-30));
+  }
+
+  void
+  setTEDFromDamageFactor(const NumericType damageFactor,
+                         const NumericType coefficientScale = NumericType(0.5),
+                         const NumericType normalization = NumericType(1e20)) {
     const auto d = std::max(damageFactor, NumericType(0));
     tedCoefficient_ = std::max(coefficientScale, NumericType(0)) * d;
     tedNormalization_ = std::max(normalization, NumericType(1e-30));
@@ -446,12 +453,9 @@ public:
     return defectDiagnostics_;
   }
 
-  NumericType diffusivity() const {
-    return diffusivityAt(temperatureK_);
-  }
+  NumericType diffusivity() const { return diffusivityAt(temperatureK_); }
 
-  NumericType diffusivityAt(
-      const NumericType temperatureK) const {
+  NumericType diffusivityAt(const NumericType temperatureK) const {
     if (!useArrhenius_)
       return diffusionCoefficient_;
     constexpr NumericType kB_eV_per_K = NumericType(8.617333262145e-5);
@@ -506,7 +510,8 @@ public:
 
     const bool useEmbedded = cellSet_->hasEmbeddedBoundaries();
     if (useEmbedded)
-      embeddedDiffSolver_.setDefaultBoundaryCondition(surfaceBoundaryCondition_);
+      embeddedDiffSolver_.setDefaultBoundaryCondition(
+          surfaceBoundaryCondition_);
 
     bool useDefectCoupling = defectCouplingEnabled_;
     bool useDefectClustering = defectClusteringEnabled_;
@@ -609,8 +614,7 @@ public:
                               (endTemperatureK - startTemperatureK) * progress;
         }
 
-        const auto diffusionCoefficient =
-            diffusivityAt(localTemperatureK);
+        const auto diffusionCoefficient = diffusivityAt(localTemperatureK);
         NumericType dt = timeStep_;
         if (mode_ == AnnealMode::Explicit) {
           if (diffusionCoefficient > NumericType(0)) {
@@ -638,6 +642,14 @@ public:
         dt = std::max(dt, NumericType(1e-15));
         if (dt > remaining)
           dt = remaining;
+        // With the effective TED active D_eff is enhanced well above the
+        // intrinsic value; over a whole-segment implicit step the diffusion
+        // number D_eff*dt/dx^2 is too large for the iterative solver to
+        // converge. Cap dt (the while-loop sub-steps) so each step stays
+        // convergent.
+        if (tedStaticFactor_ > NumericType(0) &&
+            defectMaxTimeStep_ > NumericType(0))
+          dt = std::min(dt, defectMaxTimeStep_);
 
         if (useDefectCoupling && interstitial && vacancy) {
           if (interstitialDiffusivity_ > NumericType(0)) {
@@ -653,15 +665,15 @@ public:
               embeddedDiffSolver_.step(*vacancy, *materials, dx, dt,
                                        vacancyDiffusivity_);
             else
-              diffSolver_.step(*vacancy, *materials, dx, dt, vacancyDiffusivity_);
+              diffSolver_.step(*vacancy, *materials, dx, dt,
+                               vacancyDiffusivity_);
           }
 
 #pragma omp parallel for
           for (int i = 0; i < static_cast<int>(interstitial->size()); ++i) {
             const auto I = (*interstitial)[i];
             const auto V = (*vacancy)[i];
-            const auto [Ieq, Veq] =
-                defectEquilibriumAt(localTemperatureK);
+            const auto [Ieq, Veq] = defectEquilibriumAt(localTemperatureK);
             // Pair recombination k·I·V is stiff right after implantation
             // (k·I ≫ 1/dt): explicit Euler overshoots negative and the
             // non-negative clamp then wipes out BOTH populations including
@@ -678,7 +690,7 @@ public:
             auto newV = V;
             if (recombinationRate_ > NumericType(0)) {
               const auto delta = I - V;
-              const auto kdt   = recombinationRate_ * dt;
+              const auto kdt = recombinationRate_ * dt;
               if (std::abs(delta) * kdt < NumericType(1e-12)) {
                 newV = V / (NumericType(1) + kdt * V);
                 newI = newV + delta;
@@ -731,18 +743,18 @@ public:
               // where h = f*(p/ni) + (1-f)*(ni/p),  p from local [dopant].
               // May be combined with TED if defect coupling is also active.
               const auto ni = intrinsicCarrierDensityAt(localTemperatureK);
-              const auto f  = fermiChargedFraction_;
+              const auto f = fermiChargedFraction_;
               auto combinedFn = [&](const int idx) {
-                const auto C  = std::max((*concentration)[idx], NumericType(0));
-                const auto p  = NumericType(0.5) *
-                                (C + std::sqrt(C * C + NumericType(4) * ni * ni));
-                const auto h    = f * (p / ni) + (NumericType(1) - f) * (ni / p);
+                const auto C = std::max((*concentration)[idx], NumericType(0));
+                const auto p =
+                    NumericType(0.5) *
+                    (C + std::sqrt(C * C + NumericType(4) * ni * ni));
+                const auto h = f * (p / ni) + (NumericType(1) - f) * (ni / p);
                 NumericType Deff = diffusionCoefficient * h;
                 if (tedCoefficient_ > NumericType(0)) {
-                  const auto defectTerm =
-                      std::max(NumericType(0),
-                               ((*interstitial)[idx] - (*vacancy)[idx]) /
-                                   tedNormalization_);
+                  const auto defectTerm = std::max(
+                      NumericType(0), ((*interstitial)[idx] - (*vacancy)[idx]) /
+                                          tedNormalization_);
                   Deff *= (NumericType(1) + tedCoefficient_ * defectTerm);
                 }
                 return Deff;
@@ -755,10 +767,9 @@ public:
                                          combinedFn);
             } else if (tedCoefficient_ > NumericType(0)) {
               auto tedFn = [&](const int idx) {
-                const auto defectTerm =
-                    std::max(NumericType(0),
-                             ((*interstitial)[idx] - (*vacancy)[idx]) /
-                                 tedNormalization_);
+                const auto defectTerm = std::max(
+                    NumericType(0), ((*interstitial)[idx] - (*vacancy)[idx]) /
+                                        tedNormalization_);
                 return diffusionCoefficient *
                        (NumericType(1) + tedCoefficient_ * defectTerm);
               };
@@ -779,13 +790,37 @@ public:
           }
         } else {
           if (diffusionCoefficient > NumericType(0)) {
-            if (fermiEnabled_) {
+            if (tedStaticFactor_ > NumericType(0)) {
+              // Instantaneous effective TED (Cowern/Giles): a static, bounded
+              // diffusivity enhancement driven by the implant-damage field,
+              //   D_eff(z) = D(T) * (1 + factor * damage(z)/norm).
+              // Models the NET TED-enhanced Dt (the transient is short vs. the
+              // anneal), not the resolved interstitial dynamics — no I/V
+              // solver, so it is stable and bounded. factor/norm set the
+              // enhancement magnitude (literature: Cowern, Packan, Stolk boron
+              // TED).
+              auto dmg = cellSet_->getScalarData(damageLabel_);
+              auto tedStaticFn = [&](const int idx) {
+                const auto e =
+                    dmg ? std::max(NumericType(0), (*dmg)[idx] / tedStaticNorm_)
+                        : NumericType(0);
+                return diffusionCoefficient *
+                       (NumericType(1) + tedStaticFactor_ * e);
+              };
+              if (useEmbedded)
+                embeddedDiffSolver_.stepVariable(*concentration, *materials, dx,
+                                                 dt, tedStaticFn);
+              else
+                diffSolver_.stepVariable(*concentration, *materials, dx, dt,
+                                         tedStaticFn);
+            } else if (fermiEnabled_) {
               const auto ni = intrinsicCarrierDensityAt(localTemperatureK);
-              const auto f  = fermiChargedFraction_;
+              const auto f = fermiChargedFraction_;
               auto fermiFn = [&](const int idx) {
                 const auto C = std::max((*concentration)[idx], NumericType(0));
-                const auto p = NumericType(0.5) *
-                               (C + std::sqrt(C * C + NumericType(4) * ni * ni));
+                const auto p =
+                    NumericType(0.5) *
+                    (C + std::sqrt(C * C + NumericType(4) * ni * ni));
                 const auto h = f * (p / ni) + (NumericType(1) - f) * (ni / p);
                 return diffusionCoefficient * h;
               };
@@ -813,7 +848,7 @@ public:
         // materials (empty = all) with an independent near-interface band of
         // rate (v/w)·exp(-d/w); w≤0 falls back to single-cell surface flux.
         const bool trapActive = trapVelocity_ > NumericType(0);
-        const bool segActive  = segregationVelocity_ > NumericType(0);
+        const bool segActive = segregationVelocity_ > NumericType(0);
         if (trapActive || segActive) {
           std::vector<NumericType> *trapped = nullptr;
           if (trapActive) {
@@ -823,8 +858,8 @@ public:
               // must never run on a field that accumulates across steps.
               cellSet_->addScalarData(trappedLabel_, NumericType(0));
               concentration = cellSet_->getScalarData(speciesLabel_);
-              materials     = cellSet_->getScalarData(materialLabel_);
-              trapped       = cellSet_->getScalarData(trappedLabel_);
+              materials = cellSet_->getScalarData(materialLabel_);
+              trapped = cellSet_->getScalarData(trappedLabel_);
             }
           }
           const int nCells = static_cast<int>(concentration->size());
@@ -873,10 +908,10 @@ public:
             buildDistance(ifDistSeg_, segMaterials_);
 
           // Per-cell volumetric rate [1/s] for a band reaction.
-          auto bandRate = [&](int i, NumericType v, NumericType w,
-                              const std::vector<NumericType> &dist,
-                              const std::unordered_set<int> &trig)
-              -> NumericType {
+          auto bandRate =
+              [&](int i, NumericType v, NumericType w,
+                  const std::vector<NumericType> &dist,
+                  const std::unordered_set<int> &trig) -> NumericType {
             if (w > NumericType(0)) {
               const auto d = dist[i];
               if (d < NumericType(0))
@@ -900,14 +935,14 @@ public:
             const auto mat = static_cast<int>((*materials)[i]);
             if (!isDiffusiveMaterial(mat) || isBlockedMaterial(mat))
               continue;
-            const auto rTrap =
-                trapActive ? bandRate(i, trapVelocity_, trapWidth_, ifDistTrap_,
-                                      trapMaterials_)
-                           : NumericType(0);
-            const auto rSeg =
-                segActive ? bandRate(i, segregationVelocity_, segWidth_,
-                                     ifDistSeg_, segMaterials_)
-                          : NumericType(0);
+            const auto rTrap = trapActive
+                                   ? bandRate(i, trapVelocity_, trapWidth_,
+                                              ifDistTrap_, trapMaterials_)
+                                   : NumericType(0);
+            const auto rSeg = segActive
+                                  ? bandRate(i, segregationVelocity_, segWidth_,
+                                             ifDistSeg_, segMaterials_)
+                                  : NumericType(0);
             const auto rTot = rTrap + rSeg;
             if (rTot <= NumericType(0))
               continue;
@@ -915,7 +950,7 @@ public:
             const auto removed = (*concentration)[i] * (NumericType(1) - decay);
             (*concentration)[i] -= removed;
             if (trapped)
-              (*trapped)[i] += removed * (rTrap / rTot);  // seg fraction lost
+              (*trapped)[i] += removed * (rTrap / rTot); // seg fraction lost
           }
         }
 
@@ -928,8 +963,7 @@ public:
         row.time_s = diagnosticsElapsedTime_ + segmentDuration;
         row.temperature_K =
             NumericType(0.5) * (startTemperatureK + endTemperatureK);
-        const auto [Ieq, Veq] =
-            defectEquilibriumAt(row.temperature_K);
+        const auto [Ieq, Veq] = defectEquilibriumAt(row.temperature_K);
         row.Ieq = Ieq;
         row.Veq = Veq;
 
@@ -1029,11 +1063,13 @@ private:
   // Re-builds the material filter locally so it can be called independently
   // of the diffusion solver context.
   void applyActivationImpl_() {
-    const bool solid = activationEnabled_ && solidSolubilityC0_ > NumericType(0);
+    const bool solid =
+        activationEnabled_ && solidSolubilityC0_ > NumericType(0);
     const bool damageAct = damageActivationEnabled_;
     if (!solid && !damageAct)
       return;
-    if (!cellSet_) return;
+    if (!cellSet_)
+      return;
 
     // Guard: species and material fields must already exist.
     if (!cellSet_->getScalarData(speciesLabel_) ||
@@ -1046,8 +1082,8 @@ private:
     cellSet_->addScalarData(activeLabel_, NumericType(0));
 
     auto *concentration = cellSet_->getScalarData(speciesLabel_);
-    auto *materials     = cellSet_->getScalarData(materialLabel_);
-    auto *active        = cellSet_->getScalarData(activeLabel_);
+    auto *materials = cellSet_->getScalarData(materialLabel_);
+    auto *active = cellSet_->getScalarData(activeLabel_);
 
     // Damage field for the BIC/SPER model (optional; only when enabled).
     std::vector<NumericType> *damage = nullptr;
@@ -1055,9 +1091,11 @@ private:
       damage = cellSet_->getScalarData(damageLabel_);
       if (!damage)
         Logger::getInstance()
-            .addWarning("Anneal::applyActivation: damage activation enabled but "
-                        "damage field '" + damageLabel_ +
-                        "' not found — crystalline cells pinned at the floor.")
+            .addWarning(
+                "Anneal::applyActivation: damage activation enabled but "
+                "damage field '" +
+                damageLabel_ +
+                "' not found — crystalline cells pinned at the floor.")
             .print();
     }
 
@@ -1076,10 +1114,9 @@ private:
     };
 
     // Use the configured temperature (or peak temperature for a schedule).
-    const NumericType T =
-        temperatureSchedule_.empty()
-            ? temperatureK_
-            : temperatureSchedule_.back().endTemperatureK;
+    const NumericType T = temperatureSchedule_.empty()
+                              ? temperatureK_
+                              : temperatureSchedule_.back().endTemperatureK;
     const auto C_SS =
         solid ? evalArrhenius(solidSolubilityC0_, solidSolubilityEa_eV_, T)
               : NumericType(0);
@@ -1181,11 +1218,12 @@ private:
   // At 300 K: ~9.7e9 cm^-3.  At 1303 K (1030 °C): ~1.7e19 cm^-3.
   NumericType intrinsicCarrierDensityAt(const NumericType T_K) const {
     constexpr NumericType kB_eV = NumericType(8.617333262145e-5);
-    const NumericType t  = T_K / NumericType(300);
+    const NumericType t = T_K / NumericType(300);
     const NumericType Nc = NumericType(2.86e19) * std::pow(t, NumericType(1.5));
     const NumericType Nv = NumericType(3.10e19) * std::pow(t, NumericType(1.5));
-    const NumericType Eg = NumericType(1.17) -
-                           NumericType(4.37e-4) * T_K * T_K / (T_K + NumericType(636));
+    const NumericType Eg = NumericType(1.17) - NumericType(4.37e-4) * T_K *
+                                                   T_K /
+                                                   (T_K + NumericType(636));
     const NumericType kBT = kB_eV * T_K;
     return std::sqrt(Nc * Nv) * std::exp(-Eg / (NumericType(2) * kBT));
   }
@@ -1243,6 +1281,10 @@ private:
   NumericType vacancyEquilibriumEa_eV_ = NumericType(0);
   NumericType tedCoefficient_ = NumericType(0);
   NumericType tedNormalization_ = NumericType(1e20);
+  NumericType defectMaxTimeStep_ =
+      NumericType(0.05);                         // s; caps dt when TED active
+  NumericType tedStaticFactor_ = NumericType(0); // instantaneous effective TED
+  NumericType tedStaticNorm_ = NumericType(1);
   bool fermiEnabled_ = false;
   NumericType fermiChargedFraction_ = NumericType(0.9);
   bool defectClusteringEnabled_ = false;
@@ -1260,8 +1302,8 @@ private:
   NumericType trapVelocity_ = NumericType(0);
   NumericType trapWidth_ = NumericType(0);
   NumericType segWidth_ = NumericType(0);
-  std::unordered_set<int> trapMaterials_;   // empty = all blocking
-  std::unordered_set<int> segMaterials_;    // empty = all blocking
+  std::unordered_set<int> trapMaterials_; // empty = all blocking
+  std::unordered_set<int> segMaterials_;  // empty = all blocking
   std::vector<NumericType> ifDistTrap_;
   std::vector<NumericType> ifDistSeg_;
   std::string trappedLabel_ = "trapped_concentration";
