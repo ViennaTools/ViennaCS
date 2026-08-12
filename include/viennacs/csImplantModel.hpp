@@ -1,0 +1,38 @@
+#pragma once
+
+#include "vcUtil.hpp"
+#include <vcSmartPointer.hpp>
+
+namespace viennacs {
+
+using viennacore::SmartPointer;
+
+template <typename NumericType, int D> class ImplantModel {
+public:
+  virtual ~ImplantModel() = default;
+  virtual NumericType getDepthProfile(NumericType depth) {
+    // profile of empirical implant model in z direction
+    return 0.;
+  }
+
+  virtual NumericType getLateralProfile(NumericType offset, NumericType depth) {
+    // profile of empirical implant model in lateral directions
+    return 0.;
+  }
+
+  virtual NumericType getProfile(NumericType depth, NumericType offset) {
+    return getDepthProfile(depth) * getLateralProfile(offset, depth);
+  }
+
+  virtual NumericType getMaxDepth() {
+    // maximum depth of the implant
+    return 0.;
+  }
+
+  virtual NumericType getMaxLateralRange() {
+    // practical lateral cut-off of the implant kernel
+    return 0.;
+  }
+};
+
+} // namespace viennacs

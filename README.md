@@ -9,7 +9,11 @@
 </div>
 
 
-ViennaCS is a header-only C++ cell set library, which adds the possibility of using volumetric representations on top of existing level-set functionalities for surfaces. Combined with ray tracing techniques, this enables the simulation of particle scattering and ion implantation.
+ViennaCS is a header-only C++ cell set library, which adds the possibility of using volumetric representations on top of existing level-set functionalities for surfaces. Combined with ray tracing techniques, this enables cell-set based particle and field updates for process simulators.
+
+## Role in ViennaTools Process Flows
+
+ViennaCS is intended as a framework/solver layer for cell-set based numerics. ViennaCS provides the cell-set driver interfaces and numerical solvers they use.
 
 > [!NOTE]
 > ViennaCS is under heavy development and improved daily. If you do have suggestions or find bugs, please let us know!

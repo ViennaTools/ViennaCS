@@ -34,4 +34,4 @@ inline constexpr bool isVersionAtLeast(int major, int minor = 0,
 // Version as string for display purposes
 inline constexpr const char *versionString() { return version; }
 
-} // namespace viennals
+} // namespace viennacs

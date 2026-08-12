@@ -1,9 +1,17 @@
 build/
 .vscode/
-.venv
+.venv/
+.codex/
+.codex
+__pycache__/
+.claude/
 .idea/
 cmake-build-*
 __pycache__
+data/
+sprocess_ug.pdf
+tools/
+vsclib/
 
 # Prerequisites
 *.d
@@ -40,3 +48,6 @@ __pycache__
 
 # Output .vt* files
 *.vt*
+
+# Documentation
+*.pdf

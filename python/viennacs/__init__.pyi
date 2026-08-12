@@ -11,15 +11,24 @@ of particle scattering and ion implantation."
 from __future__ import annotations
 import sys as _sys
 from viennacs._core import setNumThreads
+from viennacs.d2 import Anneal
 from viennacs.d2 import AtomicLayerProcess
 from viennacs.d2 import DenseCellSet
+from viennacs.d2 import Implant
+from viennacs.d2 import ImplantModel
 from viennacs.d2 import MeanFreePath
+from viennacs.d2 import NetDoping
 from viennacs.d2 import Precursor
 from viennacs.d2 import SegmentCells
+from viennacs.d2 import SheetResistance
+from viennacs._core import BoundaryCondition
+from viennacs._core import BoundaryConditionType
+from viennacs._core import DiffusionSolverMode
+from viennacs._core import ImplantDoseControl
 from . import _core
 from . import d2
 from . import d3
-__all__: list[str] = ['AtomicLayerProcess', 'DenseCellSet', 'MeanFreePath', 'PROXY_DIM', 'Precursor', 'SegmentCells', 'd2', 'd3', 'getDimension', 'setDimension', 'setNumThreads', 'version']
+__all__: list[str] = ['Anneal', 'AtomicLayerProcess', 'BoundaryCondition', 'BoundaryConditionType', 'DenseCellSet', 'DiffusionSolverMode', 'Implant', 'ImplantDoseControl', 'ImplantModel', 'MeanFreePath', 'NetDoping', 'PROXY_DIM', 'Precursor', 'SegmentCells', 'SheetResistance', 'd2', 'd3', 'getDimension', 'setDimension', 'setNumThreads', 'version']
 def __dir__():
     ...
 def __getattr__(name):
