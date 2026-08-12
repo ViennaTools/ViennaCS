@@ -1,6 +1,6 @@
+#include <csBoundaryDiffusionSolver.hpp>
 #include <csDenseCellSet.hpp>
 #include <csDiffusionSolver.hpp>
-#include <csBoundaryDiffusionSolver.hpp>
 
 #include <lsBooleanOperation.hpp>
 #include <lsMakeGeometry.hpp>
@@ -19,11 +19,13 @@ using T = double;
 constexpr int D = 2;
 
 // Substrate (material 1) from y=0 to subH; cover (material 2) above.
-cs::SmartPointer<cs::DenseCellSet<T, D>>
-makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
-  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta, subH + topSpace};
-  ls::BoundaryConditionEnum bc[D] = {ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
-                                     ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+cs::SmartPointer<cs::DenseCellSet<T, D>> makeSlabCellSet(T gridDelta, T xExtent,
+                                                         T subH, T topSpace) {
+  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta,
+                     subH + topSpace};
+  ls::BoundaryConditionEnum bc[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
   T origin[D] = {};
   T normal[D] = {};
   normal[D - 1] = 1.;
@@ -31,14 +33,16 @@ makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
   auto makePlane = [&](T y) {
     origin[D - 1] = y;
     auto ls = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
-    ls::MakeGeometry<T, D>(ls, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+    ls::MakeGeometry<T, D>(
+        ls, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
         .apply();
     return ls;
   };
 
   auto bottom = makePlane(0.);
   auto top = makePlane(subH);
-  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
+  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION)
+      .apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
   matMap->insertNextMaterial(1);
@@ -66,8 +70,8 @@ makeEmbeddedPlaneCellSet(T gridDelta, T interfaceY, T topDepth) {
   normal[D - 1] = 1.;
 
   auto surface = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
-  ls::MakeGeometry<T, D>(
-      surface, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+  ls::MakeGeometry<T, D>(surface,
+                         ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
       .apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
@@ -93,20 +97,21 @@ void testExplicitWithInternalSource() {
   auto cellSet = makeSlabCellSet(gridDelta, 4.0, subH, 0.5);
   cellSet->addScalarData("field", 0.);
   auto field = cellSet->getScalarData("field");
-  auto mats  = cellSet->getScalarData("Material");
+  auto mats = cellSet->getScalarData("Material");
 
   // Tag the topmost substrate layer as source (material 3) and set it to 1.
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T y = cellSet->getCellCenter(i)[D - 1];
     if (std::fabs(y - (subH - 0.5 * gridDelta)) < 0.5 * gridDelta) {
-      (*mats)[i]  = 3.;
+      (*mats)[i] = 3.;
       (*field)[i] = 1.;
     }
   }
 
-  const T D_coeff  = 1.0;
-  const T dt       = 0.4 * gridDelta * gridDelta / (2. * D * D_coeff);
+  const T D_coeff = 1.0;
+  const T dt = 0.4 * gridDelta * gridDelta / (2. * D * D_coeff);
 
   cs::DiffusionSolver<T, D> solver;
   solver.setCellSet(cellSet);
@@ -125,7 +130,7 @@ void testExplicitWithInternalSource() {
 
   // Concentration must have diffused into material-1 cells
   T sumConc = 0.;
-  int nSub  = 0;
+  int nSub = 0;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
     if (static_cast<int>((*mats)[i]) == 1) {
       sumConc += (*field)[i];
@@ -146,12 +151,13 @@ void testGaussSeidelSteadyState() {
   const T subH = 2.0;
   const T D_coeff = 1.0;
 
-  // Run to steady state with a given mode and return mean substrate concentration.
+  // Run to steady state with a given mode and return mean substrate
+  // concentration.
   auto runToSteadyState = [&](cs::DiffusionSolverMode mode) -> T {
     auto cellSet = makeSlabCellSet(gridDelta, 4.0, subH, 0.5);
     cellSet->addScalarData("field", 0.);
     auto field = cellSet->getScalarData("field");
-    auto mats  = cellSet->getScalarData("Material");
+    auto mats = cellSet->getScalarData("Material");
 
     // Spike at mid-depth to drive diffusion
     for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
@@ -177,15 +183,18 @@ void testGaussSeidelSteadyState() {
     }
 
     T sum = 0.;
-    int n  = 0;
+    int n = 0;
     for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-      if (static_cast<int>((*mats)[i]) == 1) { sum += (*field)[i]; ++n; }
+      if (static_cast<int>((*mats)[i]) == 1) {
+        sum += (*field)[i];
+        ++n;
+      }
     }
     return n > 0 ? sum / n : 0.;
   };
 
   const T meanExplicit = runToSteadyState(cs::DiffusionSolverMode::Explicit);
-  const T meanGS       = runToSteadyState(cs::DiffusionSolverMode::GaussSeidel);
+  const T meanGS = runToSteadyState(cs::DiffusionSolverMode::GaussSeidel);
 
   VC_TEST_ASSERT(meanExplicit > 0.);
   VC_TEST_ASSERT(meanGS > 0.);
@@ -201,9 +210,10 @@ void testBlockedMaterial() {
 
   auto cellSet = makeSlabCellSet(gridDelta, 4.0, subH, 0.5);
 
-  // Add field FIRST so all subsequent getScalarData calls return stable pointers.
+  // Add field FIRST so all subsequent getScalarData calls return stable
+  // pointers.
   cellSet->addScalarData("field", 0.);
-  auto mats  = cellSet->getScalarData("Material");
+  auto mats = cellSet->getScalarData("Material");
   auto field = cellSet->getScalarData("field");
 
   // Mark the bottommost substrate layer as blocked (material 3)
@@ -215,7 +225,8 @@ void testBlockedMaterial() {
 
   // Uniform concentration in the diffusive region
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) (*field)[i] = 1.;
+    if (static_cast<int>((*mats)[i]) == 1)
+      (*field)[i] = 1.;
 
   cs::DiffusionSolver<T, D> solver;
   solver.setCellSet(cellSet);
@@ -227,7 +238,8 @@ void testBlockedMaterial() {
   for (int s = 0; s < 50; ++s)
     solver.step(*field, *mats, gridDelta, dt, D_coeff);
 
-  // Blocked cells must remain at zero (they were initialised to 0 and never updated)
+  // Blocked cells must remain at zero (they were initialised to 0 and never
+  // updated)
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
     if (static_cast<int>((*mats)[i]) == 3)
       VC_TEST_ASSERT_ISCLOSE((*field)[i], 0., 1e-12);
@@ -245,16 +257,18 @@ void testMassConservation(cs::DiffusionSolverMode mode) {
   auto cellSet = makeSlabCellSet(gridDelta, 4.0, subH, 0.5);
   cellSet->addScalarData("field", 0.);
   auto field = cellSet->getScalarData("field");
-  auto mats  = cellSet->getScalarData("Material");
+  auto mats = cellSet->getScalarData("Material");
 
   // Gaussian spike centred in the substrate
   const T centre = 0.5 * subH;
-  const T sigma  = 0.5;
+  const T sigma = 0.5;
   T totalInit = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T y = cellSet->getCellCenter(i)[D - 1];
-    (*field)[i] = std::exp(-0.5 * (y - centre) * (y - centre) / (sigma * sigma));
+    (*field)[i] =
+        std::exp(-0.5 * (y - centre) * (y - centre) / (sigma * sigma));
     totalInit += (*field)[i];
   }
   VC_TEST_ASSERT(totalInit > 0.);
@@ -273,7 +287,8 @@ void testMassConservation(cs::DiffusionSolverMode mode) {
 
   T totalFinal = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) totalFinal += (*field)[i];
+    if (static_cast<int>((*mats)[i]) == 1)
+      totalFinal += (*field)[i];
 
   // Mass must be conserved to within 0.1 %
   VC_TEST_ASSERT_ISCLOSE(totalFinal, totalInit, 1e-3 * totalInit);
@@ -316,13 +331,12 @@ void testEmbeddedBoundaryDirichletUsesSubGridDistance() {
   solver.setCellSet(cellSet);
   solver.setMode(cs::DiffusionSolverMode::Explicit);
   solver.setDiffusiveMaterials({diffusiveMaterial});
-  solver.setBoundaryCondition(0,
-                              cs::BoundaryCondition<T>::dirichlet(1.));
+  solver.setBoundaryCondition(0, cs::BoundaryCondition<T>::dirichlet(1.));
 
   solver.step(field, *mats, gridDelta, dt, diffusivity);
 
-  const T expected = dt * 2. * diffusivity /
-                     (targetDistance * (targetDistance + gridDelta));
+  const T expected =
+      dt * 2. * diffusivity / (targetDistance * (targetDistance + gridDelta));
   VC_TEST_ASSERT_ISCLOSE(field[targetCell], expected, 1.e-10)
 }
 
@@ -389,11 +403,11 @@ void testSourceFieldExplicit() {
   const T S = 2.;
   const T dt = 0.01;
 
-  auto sumMat1 = [](const std::vector<T> *f, const std::vector<T> *m,
-                    int n) {
+  auto sumMat1 = [](const std::vector<T> *f, const std::vector<T> *m, int n) {
     T s = 0.;
     for (int i = 0; i < n; ++i)
-      if (static_cast<int>((*m)[i]) == 1) s += (*f)[i];
+      if (static_cast<int>((*m)[i]) == 1)
+        s += (*f)[i];
     return s;
   };
 
@@ -427,7 +441,7 @@ void testSourceFieldExplicit() {
 
   const int n = csSrc->getNumberOfCells();
   const T totalNoSrc = sumMat1(fNoSrc, mNoSrc, n);
-  const T totalSrc   = sumMat1(fSrc,   mSrc,   n);
+  const T totalSrc = sumMat1(fSrc, mSrc, n);
 
   // Source must have added positive mass
   VC_TEST_ASSERT(totalSrc > totalNoSrc);
@@ -436,10 +450,12 @@ void testSourceFieldExplicit() {
   // contributing neighbours — a known conserved quantity is dt*S*nActive).
   int nDiffuse = 0;
   for (int i = 0; i < n; ++i)
-    if (static_cast<int>((*mSrc)[i]) == 1) ++nDiffuse;
+    if (static_cast<int>((*mSrc)[i]) == 1)
+      ++nDiffuse;
   VC_TEST_ASSERT(nDiffuse > 0);
   const T expectedIncrease = dt * S * nDiffuse;
-  VC_TEST_ASSERT_ISCLOSE(totalSrc - totalNoSrc, expectedIncrease, 0.1 * expectedIncrease);
+  VC_TEST_ASSERT_ISCLOSE(totalSrc - totalNoSrc, expectedIncrease,
+                         0.1 * expectedIncrease);
 }
 
 // --- Test 8: GaussSeidel source field raises concentration -----------------
@@ -454,10 +470,11 @@ void testSourceFieldGaussSeidel() {
   auto cellSet = makeSlabCellSet(gridDelta, 4.0, subH, 0.5);
   cellSet->addScalarData("field", 0.);
   auto field = cellSet->getScalarData("field");
-  auto mats  = cellSet->getScalarData("Material");
+  auto mats = cellSet->getScalarData("Material");
 
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) (*field)[i] = C0;
+    if (static_cast<int>((*mats)[i]) == 1)
+      (*field)[i] = C0;
 
   std::vector<T> sourceField(cellSet->getNumberOfCells(), S);
 
@@ -470,7 +487,8 @@ void testSourceFieldGaussSeidel() {
   solver.step(*field, *mats, gridDelta, dt, D_coeff);
 
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     VC_TEST_ASSERT((*field)[i] > C0);
   }
 }
@@ -502,7 +520,8 @@ void testEmbeddedBoundarySourceField() {
   solver.step(field, *mats, gridDelta, dt, D_coeff);
 
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     VC_TEST_ASSERT_ISCLOSE(field[i], C0 + dt * S, 1e-10);
   }
 }

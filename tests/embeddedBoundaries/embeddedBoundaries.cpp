@@ -29,8 +29,7 @@ LevelSet makePlane(const T *bounds, ls::BoundaryConditionEnum *boundaryConds,
 }
 
 cs::DenseCellSet<T, D> makeCellSet(const std::vector<LevelSet> &levelSets,
-                                   T depth,
-                                   MaterialMap materialMap = nullptr) {
+                                   T depth, MaterialMap materialMap = nullptr) {
   cs::DenseCellSet<T, D> cellSet;
   cellSet.setCellSetPosition(true);
   cellSet.setCoverMaterial(0);
@@ -176,7 +175,8 @@ void testFaceBoundaryCache() {
   // Face index for the y- side: axis*2 + 0 = (D-1)*2
   constexpr unsigned yMinusFace = (D - 1) * 2;
 
-  // Find a cell just above the interface that has a boundary point on its y- face.
+  // Find a cell just above the interface that has a boundary point on its y-
+  // face.
   bool foundCell = false;
   for (unsigned cellId = 0; cellId < cellSet.getNumberOfCells(); ++cellId) {
     const auto center = cellSet.getCellCenter(cellId);
@@ -227,9 +227,8 @@ void testTiltedBoundaryPoints() {
       continue;
     foundOnPlane = true;
     ++onPlaneCount;
-    const T normalNorm =
-        std::sqrt(point.normal[0] * point.normal[0] +
-                  point.normal[1] * point.normal[1]);
+    const T normalNorm = std::sqrt(point.normal[0] * point.normal[0] +
+                                   point.normal[1] * point.normal[1]);
     if (normalNorm < 1.e-12)
       continue;
     const T alignment =

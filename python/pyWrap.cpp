@@ -30,9 +30,10 @@ PYBIND11_MODULE(VIENNACS_MODULE_NAME, module) {
                   py::arg("outwardFlux") = T(0),
                   "Create a Neumann condition with the given outward flux "
                   "(default 0 = zero flux).")
-      .def_static("robin", &BoundaryCondition<T>::robin,
-                  py::arg("transfer"), py::arg("exteriorValue"),
-                  "Create a Robin condition: flux = transfer*(c - exteriorValue).");
+      .def_static(
+          "robin", &BoundaryCondition<T>::robin, py::arg("transfer"),
+          py::arg("exteriorValue"),
+          "Create a Robin condition: flux = transfer*(c - exteriorValue).");
 
   py::enum_<ImplantDoseControl>(module, "ImplantDoseControl")
       .value("Off", ImplantDoseControl::Off)

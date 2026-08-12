@@ -34,7 +34,7 @@ template <class NumericType> struct BoundaryCondition {
   }
 
   static BoundaryCondition robin(NumericType transfer,
-                                         NumericType exteriorValue) {
+                                 NumericType exteriorValue) {
     BoundaryCondition condition;
     condition.type = BoundaryConditionType::Robin;
     condition.transferCoefficient = transfer;
@@ -110,16 +110,15 @@ public:
     blockedMaterials_ = {materials.begin(), materials.end()};
   }
 
-  void setBoundaryCondition(
-      unsigned levelSetIndex,
-      const BoundaryCondition<NumericType> &condition) {
+  void setBoundaryCondition(unsigned levelSetIndex,
+                            const BoundaryCondition<NumericType> &condition) {
     boundaryConditions_[levelSetIndex] = condition;
   }
 
   void clearBoundaryConditions() { boundaryConditions_.clear(); }
 
-  void setDefaultBoundaryCondition(
-      const BoundaryCondition<NumericType> &condition) {
+  void
+  setDefaultBoundaryCondition(const BoundaryCondition<NumericType> &condition) {
     defaultBoundaryCondition_ = condition;
     useDefaultBoundaryCondition_ = true;
   }
@@ -174,7 +173,8 @@ private:
   }
 
   bool contributes(int material) const {
-    return !isBlocked(material) && (isDiffusive(material) || isSource(material));
+    return !isBlocked(material) &&
+           (isDiffusive(material) || isSource(material));
   }
 
   template <typename DiffusivityFn>
@@ -193,12 +193,10 @@ private:
           std::max(diffusivityAt(cellId), NumericType(0));
       NumericType rhs = 0.;
       for (unsigned direction = 0; direction < D; ++direction) {
-        const auto negative =
-            makeStencilSide(cellId, direction, -1, field, materials, dx,
-                            diffusivity);
-        const auto positive =
-            makeStencilSide(cellId, direction, 1, field, materials, dx,
-                            diffusivity);
+        const auto negative = makeStencilSide(cellId, direction, -1, field,
+                                              materials, dx, diffusivity);
+        const auto positive = makeStencilSide(cellId, direction, 1, field,
+                                              materials, dx, diffusivity);
         addAxisContribution(rhs, negative, positive, diffusivity,
                             field[cellId]);
       }
@@ -235,12 +233,10 @@ private:
         NumericType diagonal = 1.;
 
         for (unsigned direction = 0; direction < D; ++direction) {
-          const auto negative =
-              makeStencilSide(cellId, direction, -1, buffer_, materials, dx,
-                              diffusivity);
-          const auto positive =
-              makeStencilSide(cellId, direction, 1, buffer_, materials, dx,
-                              diffusivity);
+          const auto negative = makeStencilSide(cellId, direction, -1, buffer_,
+                                                materials, dx, diffusivity);
+          const auto positive = makeStencilSide(cellId, direction, 1, buffer_,
+                                                materials, dx, diffusivity);
           addImplicitAxisContribution(rightHandSide, diagonal, negative,
                                       positive, diffusivity, dt);
         }
@@ -268,16 +264,15 @@ private:
   StencilSide makeStencilSide(int cellId, unsigned direction, int offset,
                               const std::vector<NumericType> &field,
                               const std::vector<NumericType> &materials,
-                              NumericType dx,
-                              NumericType diffusivity) const {
+                              NumericType dx, NumericType diffusivity) const {
     const unsigned faceIdx = direction * 2u + (offset > 0 ? 1u : 0u);
     const int pointId = cellSet_->getFaceBoundaryPointId(cellId, faceIdx);
     if (pointId >= 0) {
       const auto &point = cellSet_->getEmbeddedBoundaryPoints()[pointId];
       if (hasBoundaryCondition(point.levelSetIndex)) {
-        const NumericType dist = std::max(
-            cellSet_->getFaceBoundaryDistance(cellId, faceIdx),
-            minBoundaryDistanceFactor_ * dx);
+        const NumericType dist =
+            std::max(cellSet_->getFaceBoundaryDistance(cellId, faceIdx),
+                     minBoundaryDistanceFactor_ * dx);
         return boundarySide(point.levelSetIndex, dist, diffusivity, dx);
       }
     }
@@ -297,10 +292,12 @@ private:
     case BoundaryConditionType::Dirichlet:
       return {distance, 0., condition.value};
     case BoundaryConditionType::Neumann:
-      if (std::abs(condition.value) <= std::numeric_limits<NumericType>::epsilon())
+      if (std::abs(condition.value) <=
+          std::numeric_limits<NumericType>::epsilon())
         return zeroFluxSide(dx);
-      return {distance, 1., -condition.value * distance /
-                                std::max(diffusivity, NumericType(1e-30))};
+      return {distance, 1.,
+              -condition.value * distance /
+                  std::max(diffusivity, NumericType(1e-30))};
     case BoundaryConditionType::Robin: {
       const NumericType conductance = diffusivity / distance;
       const NumericType denominator =
@@ -323,15 +320,15 @@ private:
   }
 
   bool hasBoundaryCondition(unsigned levelSetIndex) const {
-    return boundaryConditions_.find(levelSetIndex) != boundaryConditions_.end() ||
+    return boundaryConditions_.find(levelSetIndex) !=
+               boundaryConditions_.end() ||
            useDefaultBoundaryCondition_;
   }
 
   StencilSide zeroFluxSide(NumericType dx) const { return {dx, 1., 0.}; }
 
   void addAxisContribution(NumericType &rhs, const StencilSide &negative,
-                           const StencilSide &positive,
-                           NumericType diffusivity,
+                           const StencilSide &positive, NumericType diffusivity,
                            NumericType nodeValue) const {
     const NumericType distanceSum = negative.distance + positive.distance;
     if (distanceSum <= std::numeric_limits<NumericType>::epsilon())
@@ -341,8 +338,7 @@ private:
   }
 
   void addSideContribution(NumericType &rhs, const StencilSide &side,
-                           NumericType distanceSum,
-                           NumericType diffusivity,
+                           NumericType distanceSum, NumericType diffusivity,
                            NumericType nodeValue) const {
     if (side.distance <= std::numeric_limits<NumericType>::epsilon())
       return;
@@ -350,8 +346,7 @@ private:
     const NumericType coefficient =
         NumericType(2) * diffusivity / (side.distance * distanceSum);
     rhs += coefficient * (side.constant +
-                          (side.nodeCoefficient - NumericType(1)) *
-                              nodeValue);
+                          (side.nodeCoefficient - NumericType(1)) * nodeValue);
   }
 
   void addImplicitAxisContribution(NumericType &rightHandSide,
@@ -369,12 +364,10 @@ private:
                                 diffusivity, dt);
   }
 
-  void addImplicitSideContribution(NumericType &rightHandSide,
-                                   NumericType &diagonal,
-                                   const StencilSide &side,
-                                   NumericType distanceSum,
-                                   NumericType diffusivity,
-                                   NumericType dt) const {
+  void
+  addImplicitSideContribution(NumericType &rightHandSide, NumericType &diagonal,
+                              const StencilSide &side, NumericType distanceSum,
+                              NumericType diffusivity, NumericType dt) const {
     if (side.distance <= std::numeric_limits<NumericType>::epsilon())
       return;
 

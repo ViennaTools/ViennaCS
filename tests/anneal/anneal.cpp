@@ -18,11 +18,13 @@ namespace cs = viennacs;
 using T = double;
 constexpr int D = 2;
 
-cs::SmartPointer<cs::DenseCellSet<T, D>>
-makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
-  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta, subH + topSpace};
-  ls::BoundaryConditionEnum bc[D] = {ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
-                                     ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+cs::SmartPointer<cs::DenseCellSet<T, D>> makeSlabCellSet(T gridDelta, T xExtent,
+                                                         T subH, T topSpace) {
+  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta,
+                     subH + topSpace};
+  ls::BoundaryConditionEnum bc[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
   T origin[D] = {};
   T normal[D] = {};
   normal[D - 1] = 1.;
@@ -30,14 +32,16 @@ makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
   auto makePlane = [&](T y) {
     origin[D - 1] = y;
     auto ls = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
-    ls::MakeGeometry<T, D>(ls, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+    ls::MakeGeometry<T, D>(
+        ls, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
         .apply();
     return ls;
   };
 
   auto bottom = makePlane(0.);
   auto top = makePlane(subH);
-  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
+  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION)
+      .apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
   matMap->insertNextMaterial(1);
@@ -55,15 +59,17 @@ makeSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
 cs::SmartPointer<cs::DenseCellSet<T, D>>
 makeNegativeYSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
   T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -subH, topSpace};
-  ls::BoundaryConditionEnum bc[D] = {ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
-                                     ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+  ls::BoundaryConditionEnum bc[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
   T origin[D] = {};
   T normal[D] = {};
   normal[D - 1] = 1.;
 
   auto makePlane = [&](T y) {
     origin[D - 1] = y;
-    auto levelSet = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
+    auto levelSet =
+        ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
     ls::MakeGeometry<T, D>(
         levelSet, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
         .apply();
@@ -72,7 +78,8 @@ makeNegativeYSlabCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
 
   auto bottom = makePlane(-subH);
   auto top = makePlane(0.);
-  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
+  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION)
+      .apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
   matMap->insertNextMaterial(1);
@@ -104,7 +111,8 @@ void testDiffusionSpreads() {
   const T midY = 0.5 * subH;
   T peakValue = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T y = cellSet->getCellCenter(i)[D - 1];
     if (std::fabs(y - midY) < gridDelta) {
       (*field)[i] = 1.0;
@@ -116,7 +124,8 @@ void testDiffusionSpreads() {
   // Sum before anneal
   T sumBefore = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) sumBefore += (*field)[i];
+    if (static_cast<int>((*mats)[i]) == 1)
+      sumBefore += (*field)[i];
 
   cs::Anneal<T, D> anneal;
   anneal.setCellSet(cellSet);
@@ -133,7 +142,8 @@ void testDiffusionSpreads() {
   T newPeak = 0.;
   T sumAfter = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     newPeak = std::max(newPeak, (*field)[i]);
     sumAfter += (*field)[i];
   }
@@ -157,9 +167,11 @@ void testSolidActivation() {
   auto field = cellSet->getScalarData("concentration");
   auto mats = cellSet->getScalarData("Material");
 
-  // Uniform concentration in substrate: use 1000× C_SS so active ≈ C_SS (within 0.1 %)
+  // Uniform concentration in substrate: use 1000× C_SS so active ≈ C_SS (within
+  // 0.1 %)
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) (*field)[i] = 1e22; // cm⁻³ equivalent
+    if (static_cast<int>((*mats)[i]) == 1)
+      (*field)[i] = 1e22; // cm⁻³ equivalent
 
   cs::Anneal<T, D> anneal;
   anneal.setCellSet(cellSet);
@@ -170,7 +182,8 @@ void testSolidActivation() {
   anneal.setDuration(1.0);
   anneal.enableSolidActivation(true);
   // Solid solubility much lower than the initial concentration
-  anneal.setSolidSolubilityArrhenius(1e19, 0.); // C_SS = 1e19 (Ea=0 → temperature-independent)
+  anneal.setSolidSolubilityArrhenius(
+      1e19, 0.); // C_SS = 1e19 (Ea=0 → temperature-independent)
 
   anneal.apply();
 
@@ -178,19 +191,22 @@ void testSolidActivation() {
   VC_TEST_ASSERT(active != nullptr);
 
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T total = (*field)[i];
     const T act = (*active)[i];
     // Active fraction is physically bounded: 0 ≤ active ≤ total
     VC_TEST_ASSERT(act >= 0.);
     VC_TEST_ASSERT(act <= total + 1e-10);
-    // With C_total = 1000 × C_SS, formula gives C_SS * 1000/(1001) ≈ 0.999 * C_SS
+    // With C_total = 1000 × C_SS, formula gives C_SS * 1000/(1001) ≈ 0.999 *
+    // C_SS
     const T expectedActive = 1e19 * 1e22 / (1e19 + 1e22);
     VC_TEST_ASSERT_ISCLOSE(act, expectedActive, 1e16);
   }
 }
 
-// --- Test 3: temperature schedule runs without error and produces non-zero result ---
+// --- Test 3: temperature schedule runs without error and produces non-zero
+// result ---
 void testTemperatureSchedule() {
   const T gridDelta = 0.5;
   const T subH = 2.0;
@@ -201,7 +217,8 @@ void testTemperatureSchedule() {
   auto mats = cellSet->getScalarData("Material");
 
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i)
-    if (static_cast<int>((*mats)[i]) == 1) (*field)[i] = 1.0;
+    if (static_cast<int>((*mats)[i]) == 1)
+      (*field)[i] = 1.0;
 
   cs::Anneal<T, D> anneal;
   anneal.setCellSet(cellSet);
@@ -220,7 +237,8 @@ void testTemperatureSchedule() {
   // Concentration must still exist (anneal ran) and be non-negative
   int nSub = 0;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     VC_TEST_ASSERT((*field)[i] >= 0.);
     ++nSub;
   }
@@ -235,9 +253,11 @@ void testSheetResistanceUsesPositiveDepth() {
 
   int substrateCells = 0;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T depth = -cellSet->getCellCenter(i)[D - 1];
-    if (depth < T(0)) continue;
+    if (depth < T(0))
+      continue;
     (*active)[i] = T(1e-3); // nm^-3 = 1e18 cm^-3
     ++substrateCells;
   }
@@ -262,9 +282,11 @@ void testNetDopingUsesPositiveDepth() {
 
   int substrateCells = 0;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     const T depth = -cellSet->getCellCenter(i)[D - 1];
-    if (depth < T(0)) continue;
+    if (depth < T(0))
+      continue;
     (*donor)[i] = depth < T(3) ? T(2) : T(0);
     (*acceptor)[i] = T(1);
     ++substrateCells;

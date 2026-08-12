@@ -285,13 +285,11 @@ public:
                 const int bpId =
                     cellSet_->getFaceBoundaryPointId(initialIndex, zPlusFace);
                 if (bpId >= 0) {
-                  const auto &bp =
-                      cellSet_->getEmbeddedBoundaryPoints()[bpId];
+                  const auto &bp = cellSet_->getEmbeddedBoundaryPoints()[bpId];
                   // Beam direction in 3D: (sin θ, 0, -cos θ) — tilt in xz plane
-                  const NumericType bDotN =
-                      std::sin(radians) * bp.normal[0] +
-                      NumericType(0) * bp.normal[1] +
-                      (-std::cos(radians)) * bp.normal[2];
+                  const NumericType bDotN = std::sin(radians) * bp.normal[0] +
+                                            NumericType(0) * bp.normal[1] +
+                                            (-std::cos(radians)) * bp.normal[2];
                   if (std::abs(bDotN) > NumericType(1e-6)) {
                     const NumericType entryDotN =
                         (bp.coordinate[0] - initialX) * bp.normal[0] +
@@ -321,10 +319,9 @@ public:
                         yCord - (relevant_lateral_Cells * gridDelta) / 2;
                     NumericType shifted_zCord = initialZ - zCord;
                     NumericType depth =
-                        zCord /
-                            std::max(static_cast<NumericType>(
-                                         std::abs(std::cos(radians))),
-                                     NumericType(0.01)) -
+                        zCord / std::max(static_cast<NumericType>(
+                                             std::abs(std::cos(radians))),
+                                         NumericType(0.01)) -
                         surfaceAlongBeam;
                     NumericType lateralDisplacement =
                         std::sqrt(std::pow((std::cos(radians) *
@@ -429,12 +426,10 @@ public:
               const int bpId =
                   cellSet_->getFaceBoundaryPointId(initialIndex, yPlusFace);
               if (bpId >= 0) {
-                const auto &bp =
-                    cellSet_->getEmbeddedBoundaryPoints()[bpId];
+                const auto &bp = cellSet_->getEmbeddedBoundaryPoints()[bpId];
                 // Beam direction in 2D: (sin θ, -cos θ)
-                const NumericType bDotN =
-                    std::sin(radians) * bp.normal[0] +
-                    (-std::cos(radians)) * bp.normal[1];
+                const NumericType bDotN = std::sin(radians) * bp.normal[0] +
+                                          (-std::cos(radians)) * bp.normal[1];
                 if (std::abs(bDotN) > NumericType(1e-6)) {
                   const NumericType entryDotN =
                       (bp.coordinate[0] - initialX) * bp.normal[0] +
@@ -458,10 +453,9 @@ public:
                     xCord - (relevant_lateral_Cells * gridDelta) / 2;
                 NumericType shifted_yCord = initialY - yCord;
                 NumericType depth =
-                    yCord /
-                        std::max(static_cast<NumericType>(
-                                     std::abs(std::cos(radians))),
-                                 NumericType(0.01)) -
+                    yCord / std::max(static_cast<NumericType>(
+                                         std::abs(std::cos(radians))),
+                                     NumericType(0.01)) -
                     surfaceAlongBeam;
                 NumericType lateralDisplacement =
                     std::abs(std::cos(radians) * (shifted_xCord - initialX) -

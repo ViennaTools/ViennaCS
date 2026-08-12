@@ -1,6 +1,6 @@
+#include <csBoundaryDiffusionSolver.hpp>
 #include <csDenseCellSet.hpp>
 #include <csDiffusionSolver.hpp>
-#include <csBoundaryDiffusionSolver.hpp>
 
 #include <lsMakeGeometry.hpp>
 #include <lsMaterialMap.hpp>
@@ -56,10 +56,9 @@ CellSet makeCellSet(T gridDelta, bool withEmbeddedBoundaries) {
   cellSet->setCellSetPosition(true);
   cellSet->setCoverMaterial(coverMaterial);
   cellSet->enableEmbeddedBoundaries(withEmbeddedBoundaries);
-  cellSet->fromLevelSets(
-      {makeTiltedSurface(gridDelta, halfWidth, yMin, yMax, surfaceY,
-                         surfaceSlope)},
-      matMap, coverDepth);
+  cellSet->fromLevelSets({makeTiltedSurface(gridDelta, halfWidth, yMin, yMax,
+                                            surfaceY, surfaceSlope)},
+                         matMap, coverDepth);
   cellSet->buildNeighborhood();
   return cellSet;
 }
@@ -183,10 +182,10 @@ void printComparison(CellSet cellSet, const std::vector<T> &cartesian,
   std::cout << "Substrate cells             : " << substrateCells << "\n";
   std::cout << "Embedded boundary points    : "
             << cellSet->getEmbeddedBoundaryPoints().size() << "\n";
-  std::cout << "Mean Cartesian concentration: "
-            << sumCartesian / substrateCells << "\n";
-  std::cout << "Mean embedded concentration : "
-            << sumEmbedded / substrateCells << "\n";
+  std::cout << "Mean Cartesian concentration: " << sumCartesian / substrateCells
+            << "\n";
+  std::cout << "Mean embedded concentration : " << sumEmbedded / substrateCells
+            << "\n";
   std::cout << "RMS embedded-Cartesian diff : " << l2 << "\n";
   std::cout << "Max embedded-Cartesian diff : " << maxAbs << "\n";
   std::cout << "Wrote embeddedBoundaryDiffusion.vtu\n";
@@ -207,9 +206,9 @@ void printBoundaryDiagnostics(CellSet cellSet) {
     constexpr T surfaceY = 0.25;
     constexpr T surfaceSlope = 0.35;
     maxPlaneError =
-        std::max(maxPlaneError, std::abs(point.coordinate[1] -
-                                         (surfaceY + surfaceSlope *
-                                                        point.coordinate[0])));
+        std::max(maxPlaneError,
+                 std::abs(point.coordinate[1] -
+                          (surfaceY + surfaceSlope * point.coordinate[0])));
     ++physicalInterfacePoints;
     if (point.adjacentCell >= 0 &&
         point.adjacentCell < static_cast<int>(cutCell.size())) {

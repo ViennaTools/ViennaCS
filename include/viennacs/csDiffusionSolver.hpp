@@ -17,8 +17,8 @@
 namespace viennacs {
 
 enum class DiffusionSolverMode {
-  Explicit,      // forward Euler, stability-limited dt
-  GaussSeidel,   // backward Euler, matrix-free iterative solve
+  Explicit,    // forward Euler, stability-limited dt
+  GaussSeidel, // backward Euler, matrix-free iterative solve
 #ifdef VIENNACS_USE_EIGEN
   EigenSparseLU, // backward Euler, direct sparse LU factorisation
 #endif
@@ -31,8 +31,7 @@ enum class DiffusionSolverMode {
 //   Source     — Dirichlet / fixed-value cells: not updated but contribute
 //                flux to diffusive neighbours
 //   Blocked    — hard walls: not updated, invisible to neighbours
-template <class NumericType, int D>
-class DiffusionSolver {
+template <class NumericType, int D> class DiffusionSolver {
 public:
   void setCellSet(SmartPointer<DenseCellSet<NumericType, D>> cellSet) {
     cellSet_ = cellSet;
@@ -95,7 +94,8 @@ public:
   void stepVariable(std::vector<NumericType> &field,
                     const std::vector<NumericType> &materials, NumericType dx,
                     NumericType dt, const DiffusivityFn &diffusivityAt) {
-    dispatch(field, materials, dx, dt, diffusivityAt, true, NumericType(-1), dt);
+    dispatch(field, materials, dx, dt, diffusivityAt, true, NumericType(-1),
+             dt);
   }
 
 private:
@@ -103,7 +103,8 @@ private:
   // Material predicates
   // -----------------------------------------------------------------------
   bool isDiffusive(int mat) const {
-    if (diffusiveMaterials_.empty()) return true;
+    if (diffusiveMaterials_.empty())
+      return true;
     return diffusiveMaterials_.count(mat) > 0;
   }
   bool isBlocked(int mat) const { return blockedMaterials_.count(mat) > 0; }
@@ -215,8 +216,9 @@ private:
   // -----------------------------------------------------------------------
   template <typename DiffusivityFn>
   void stepGaussSeidel(std::vector<NumericType> &field,
-                       const std::vector<NumericType> &materials, NumericType dx,
-                       NumericType dt, const DiffusivityFn &Dfn) {
+                       const std::vector<NumericType> &materials,
+                       NumericType dx, NumericType dt,
+                       const DiffusivityFn &Dfn) {
     const auto invDx2 = NumericType(1) / (dx * dx);
     ensureActiveCache(materials);
     buffer_ = field;
@@ -249,7 +251,8 @@ private:
         maxVal = std::max(maxVal, std::abs(buffer_[i]));
       }
 
-      if (maxDelta / std::max(maxVal, NumericType(1e-30)) < tolerance_) break;
+      if (maxDelta / std::max(maxVal, NumericType(1e-30)) < tolerance_)
+        break;
     }
 
     field.swap(buffer_);
@@ -293,11 +296,12 @@ private:
 
       NumericType alphaSum = NumericType(0);
       for (const auto n : cellSet_->getNeighbors(ci)) {
-        if (n < 0 || !contributes(static_cast<int>(materials[n]))) continue;
+        if (n < 0 || !contributes(static_cast<int>(materials[n])))
+          continue;
         const auto it = eigenCellMap_.find(n);
-        if (it == eigenCellMap_.end()) continue;
-        const auto alpha =
-            dt * std::max(Dfn(ci), NumericType(0)) * invDx2;
+        if (it == eigenCellMap_.end())
+          continue;
+        const auto alpha = dt * std::max(Dfn(ci), NumericType(0)) * invDx2;
         triplets.emplace_back(si, it->second, -alpha);
         alphaSum += alpha;
       }
@@ -320,13 +324,14 @@ private:
                  const std::vector<NumericType> &materials, NumericType dx,
                  NumericType dt, const DiffusivityFn &Dfn, bool variableD,
                  NumericType constantD, NumericType requestedDt) {
-    if (!cellSet_) return;
+    if (!cellSet_)
+      return;
 
-    if (eigenMapDirty_) buildEigenMap(materials);
+    if (eigenMapDirty_)
+      buildEigenMap(materials);
 
     const bool dtChanged = (requestedDt != eigenCachedDt_);
-    const bool dChanged =
-        !variableD && (constantD != eigenCachedD_);
+    const bool dChanged = !variableD && (constantD != eigenCachedD_);
     if (!eigenFactorized_ || dtChanged || dChanged || variableD) {
       assembleAndFactorise(materials, dx, dt, Dfn);
       eigenCachedDt_ = requestedDt;

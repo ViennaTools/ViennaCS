@@ -36,7 +36,8 @@ int main(int argc, char **argv) {
       params, matMap, substrateMaterial, maskMaterial);
 
   auto cellSet = cs::SmartPointer<cs::DenseCellSet<T, D>>::New();
-  const T depth = params.get("substrateHeight") + params.get("coverHeight") + 10.;
+  const T depth =
+      params.get("substrateHeight") + params.get("coverHeight") + 10.;
   cellSet->setCellSetPosition(true);
   cellSet->setCoverMaterial(coverMaterial);
   cellSet->fromLevelSets(levelSets, matMap, depth);
@@ -66,7 +67,8 @@ int main(int argc, char **argv) {
   solver.setCellSet(cellSet);
   solver.setMode(cs::DiffusionSolverMode::EigenSparseLU);
   solver.setDiffusiveMaterials({substrateMaterial});
-  solver.setSourceMaterials({coverMaterial}); // fixed-value Dirichlet neighbours
+  solver.setSourceMaterials(
+      {coverMaterial}); // fixed-value Dirichlet neighbours
   solver.setBlockedMaterials({maskMaterial});
 
   // The Eigen factorisation is cached: as long as dt and diffCoeff are

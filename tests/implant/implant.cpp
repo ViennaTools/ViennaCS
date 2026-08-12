@@ -1,7 +1,7 @@
 #include <csAnneal.hpp>
+#include <csDenseCellSet.hpp>
 #include <csImplant.hpp>
 #include <csImplantModel.hpp>
-#include <csDenseCellSet.hpp>
 
 #include <lsBooleanOperation.hpp>
 #include <lsMakeGeometry.hpp>
@@ -17,7 +17,8 @@ namespace cs = viennacs;
 using T = double;
 constexpr int D = 2;
 
-// Box-profile implant model: depth profile = 1 for depth in [0, maxDepth), lateral = 1 everywhere.
+// Box-profile implant model: depth profile = 1 for depth in [0, maxDepth),
+// lateral = 1 everywhere.
 struct BoxImplantModel : public cs::ImplantModel<T, D> {
   T maxDepth_;
   explicit BoxImplantModel(T maxDepth) : maxDepth_(maxDepth) {}
@@ -30,29 +31,33 @@ struct BoxImplantModel : public cs::ImplantModel<T, D> {
 };
 
 // 2D slab: substrate (material 1) from y=0 to y=subH, cover (material 0) above.
-// Material 0 is the default voidMaterial in csImplant, so the beam passes through
-// cover cells and enters the substrate.
+// Material 0 is the default voidMaterial in csImplant, so the beam passes
+// through cover cells and enters the substrate.
 cs::SmartPointer<cs::DenseCellSet<T, D>>
 makeImplantCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
-  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta, subH + topSpace};
-  ls::BoundaryConditionEnum bc[D] = {ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
-                                     ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+  T bounds[2 * D] = {-0.5 * xExtent, 0.5 * xExtent, -gridDelta,
+                     subH + topSpace};
+  ls::BoundaryConditionEnum bc[D] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
   T origin[D] = {};
   T normal[D] = {};
   normal[D - 1] = 1.;
 
   auto makePlane = [&](T y) {
     origin[D - 1] = y;
-    auto levelSet = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
-    ls::MakeGeometry<T, D>(levelSet,
-                           ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+    auto levelSet =
+        ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
+    ls::MakeGeometry<T, D>(
+        levelSet, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
         .apply();
     return levelSet;
   };
 
   auto bottom = makePlane(0.);
   auto top = makePlane(subH);
-  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION).apply();
+  ls::BooleanOperation<T, D>(top, bottom, ls::BooleanOperationEnum::UNION)
+      .apply();
 
   auto matMap = ls::SmartPointer<ls::MaterialMap>::New();
   matMap->insertNextMaterial(1);
@@ -62,7 +67,8 @@ makeImplantCellSet(T gridDelta, T xExtent, T subH, T topSpace) {
 
   auto cellSet = cs::SmartPointer<cs::DenseCellSet<T, D>>::New();
   cellSet->setCellSetPosition(true);
-  cellSet->setCoverMaterial(0); // material 0 = void; beam passes through cover cells
+  cellSet->setCoverMaterial(
+      0); // material 0 = void; beam passes through cover cells
   cellSet->fromLevelSets(levelSets, matMap, topSpace);
   return cellSet;
 }
@@ -147,7 +153,8 @@ void testDamageFieldCreated() {
   VC_TEST_ASSERT(total > 0.);
 }
 
-// --- Test 4: WaferDose control scales total concentration linearly with dose ---
+// --- Test 4: WaferDose control scales total concentration linearly with dose
+// ---
 void testDoseControlScalesConcentration() {
   const T gridDelta = 1.0;
   const T subH = 10.0;
@@ -184,15 +191,17 @@ void testDoseControlScalesConcentration() {
 }
 
 // --- Test 5: Anneal spreads the implanted profile and conserves total dose ---
-// Runs a full implant → anneal pipeline.  After annealing the peak concentration
-// must decrease (diffusion spreads the box profile) while the total integrated
-// dose is approximately conserved under reflective boundary conditions.
+// Runs a full implant → anneal pipeline.  After annealing the peak
+// concentration must decrease (diffusion spreads the box profile) while the
+// total integrated dose is approximately conserved under reflective boundary
+// conditions.
 void testAnnealSpreadsImplantedProfile() {
   const T gridDelta = 1.0;
   const T subH = 20.0;
 
   auto cellSet = makeImplantCellSet(gridDelta, 6.0, subH, 2.0);
-  auto model = cs::SmartPointer<BoxImplantModel>::New(4.0); // deposit in top 4 cells
+  auto model =
+      cs::SmartPointer<BoxImplantModel>::New(4.0); // deposit in top 4 cells
 
   cs::Implant<T, D> implant;
   implant.setCellSet(cellSet);
@@ -206,7 +215,8 @@ void testAnnealSpreadsImplantedProfile() {
   // Record pre-anneal peak and total in substrate
   T peakBefore = 0., sumBefore = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     peakBefore = std::max(peakBefore, (*conc)[i]);
     sumBefore += (*conc)[i];
   }
@@ -216,7 +226,8 @@ void testAnnealSpreadsImplantedProfile() {
   anneal.setCellSet(cellSet);
   anneal.setSpeciesLabel("concentration");
   anneal.setDiffusionMaterials({1});
-  anneal.setBlockingMaterials({0}); // cover material blocks diffusion out of substrate
+  anneal.setBlockingMaterials(
+      {0}); // cover material blocks diffusion out of substrate
   anneal.setDiffusionCoefficient(1.0);
   anneal.setMode(cs::AnnealMode::Explicit);
   anneal.setDuration(10.0);
@@ -224,7 +235,8 @@ void testAnnealSpreadsImplantedProfile() {
 
   T peakAfter = 0., sumAfter = 0.;
   for (int i = 0; i < cellSet->getNumberOfCells(); ++i) {
-    if (static_cast<int>((*mats)[i]) != 1) continue;
+    if (static_cast<int>((*mats)[i]) != 1)
+      continue;
     VC_TEST_ASSERT((*conc)[i] >= 0.);
     peakAfter = std::max(peakAfter, (*conc)[i]);
     sumAfter += (*conc)[i];

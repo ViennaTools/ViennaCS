@@ -76,7 +76,8 @@ private:
   std::vector<std::array<int, 2 * D>> cellFaceBoundaryPointId;
   // Raw (unclamped) distance from cell center to boundary point on that face.
   std::vector<std::array<T, 2 * D>> cellFaceBoundaryDistance;
-  // Minimum raw face-boundary distance across all cells (set by buildFaceBoundaryCache).
+  // Minimum raw face-boundary distance across all cells (set by
+  // buildFaceBoundaryCache).
   T minFaceBoundaryDistance_ = std::numeric_limits<T>::max();
 
   std::vector<T> *fillingFractions_;
@@ -229,10 +230,8 @@ public:
             materialIds.push_back(material);
             fillingFractions.push_back(std::max(1., centerValue));
             if (embeddedBoundariesEnabled_) {
-              const auto cellIdx =
-                  static_cast<int>(cellGrid->template getElements<(1 << D)>()
-                                       .size() -
-                                   1);
+              const auto cellIdx = static_cast<int>(
+                  cellGrid->template getElements<(1 << D)>().size() - 1);
               std::vector<unsigned> boundaryPointIds;
               boundaryPointIds.reserve(pendingBoundaryPoints.size());
               for (auto &point : pendingBoundaryPoints) {
@@ -511,16 +510,13 @@ public:
     return embeddedBoundariesEnabled_ && !embeddedBoundaryPoints.empty();
   }
 
-  bool embeddedBoundariesEnabled() const {
-    return embeddedBoundariesEnabled_;
-  }
+  bool embeddedBoundariesEnabled() const { return embeddedBoundariesEnabled_; }
 
   std::size_t numEmbeddedBoundaryPoints() const {
     return embeddedBoundaryPoints.size();
   }
 
-  const std::vector<EmbeddedBoundaryPoint> &
-  getEmbeddedBoundaryPoints() const {
+  const std::vector<EmbeddedBoundaryPoint> &getEmbeddedBoundaryPoints() const {
     return embeddedBoundaryPoints;
   }
 
@@ -1011,8 +1007,8 @@ private:
   }
 
   template <typename CellIterator>
-  static Vec3D<T> estimateCellNormal(
-      CellIterator &cellIt, const std::array<T, 1 << D> &values) {
+  static Vec3D<T> estimateCellNormal(CellIterator &cellIt,
+                                     const std::array<T, 1 << D> &values) {
     Vec3D<T> normal{0., 0., 0.};
     std::array<T, D> meanOffset{};
     for (unsigned corner = 0; corner < (1 << D); ++corner) {

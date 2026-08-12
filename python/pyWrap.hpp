@@ -190,8 +190,7 @@ template <int D> void bindAPI(py::module &module) {
       .def("embeddedBoundariesEnabled",
            &DenseCellSet<T, D>::embeddedBoundariesEnabled,
            "Return true if embedded boundary generation was enabled.")
-      .def("hasEmbeddedBoundaries",
-           &DenseCellSet<T, D>::hasEmbeddedBoundaries,
+      .def("hasEmbeddedBoundaries", &DenseCellSet<T, D>::hasEmbeddedBoundaries,
            "Return true if the cell set has any embedded boundary points.")
       .def("numEmbeddedBoundaryPoints",
            &DenseCellSet<T, D>::numEmbeddedBoundaryPoints,
@@ -200,18 +199,17 @@ template <int D> void bindAPI(py::module &module) {
            &DenseCellSet<T, D>::getEmbeddedBoundaryPoints,
            "Return the list of all EmbeddedBoundaryPoint objects.")
       .def("getEmbeddedBoundaryPointIds",
-           &DenseCellSet<T, D>::getEmbeddedBoundaryPointIds,
-           py::arg("cellIdx"),
+           &DenseCellSet<T, D>::getEmbeddedBoundaryPointIds, py::arg("cellIdx"),
            "Return the indices into getEmbeddedBoundaryPoints() for the given "
            "cell.")
       .def("getFaceBoundaryPointId",
-           &DenseCellSet<T, D>::getFaceBoundaryPointId,
-           py::arg("cellIdx"), py::arg("faceIdx"),
+           &DenseCellSet<T, D>::getFaceBoundaryPointId, py::arg("cellIdx"),
+           py::arg("faceIdx"),
            "Index into getEmbeddedBoundaryPoints() for the boundary point on "
            "face faceIdx (axis*2 + (offset>0?1:0)) of cellIdx, or -1 if none.")
       .def("getFaceBoundaryDistance",
-           &DenseCellSet<T, D>::getFaceBoundaryDistance,
-           py::arg("cellIdx"), py::arg("faceIdx"),
+           &DenseCellSet<T, D>::getFaceBoundaryDistance, py::arg("cellIdx"),
+           py::arg("faceIdx"),
            "Distance from the cell center to the boundary point on face "
            "faceIdx. Returns gridDelta/2 when no point exists.")
       .def("getMinFaceBoundaryDistance",
@@ -411,8 +409,7 @@ template <int D> void bindAPI(py::module &module) {
            &Anneal<T, D>::clearEquilibriumArrhenius)
       .def("setDefectEnhancedDiffusion",
            &Anneal<T, D>::setDefectEnhancedDiffusion)
-      .def("setTEDFromDamageFactor",
-           &Anneal<T, D>::setTEDFromDamageFactor,
+      .def("setTEDFromDamageFactor", &Anneal<T, D>::setTEDFromDamageFactor,
            py::arg("damageFactor"), py::arg("coefficientScale") = T(0.5),
            py::arg("normalization") = T(1e20))
       .def("enableDefectClustering", &Anneal<T, D>::enableDefectClustering,
@@ -428,8 +425,7 @@ template <int D> void bindAPI(py::module &module) {
            py::arg("materialId") = -1)
       .def("clearDefectDiagnostics", &Anneal<T, D>::clearDefectDiagnostics)
       .def("getDefectDiagnostics", &Anneal<T, D>::getDefectDiagnostics)
-      .def("diffusivity",
-           &Anneal<T, D>::diffusivity)
+      .def("diffusivity", &Anneal<T, D>::diffusivity)
       .def("enableSolidActivation", &Anneal<T, D>::enableSolidActivation,
            py::arg("enable") = true,
            "Enable the solid solubility activation model. When active, writes "
@@ -443,8 +439,7 @@ template <int D> void bindAPI(py::module &module) {
            "Set the cell-set field name for the active concentration output "
            "(default: 'active_concentration').")
       .def("setSurfaceBoundaryCondition",
-           &Anneal<T, D>::setSurfaceBoundaryCondition,
-           py::arg("condition"),
+           &Anneal<T, D>::setSurfaceBoundaryCondition, py::arg("condition"),
            "Set the embedded boundary condition applied at level-set surfaces "
            "(default: zero-flux Neumann). Only used when the cell set has "
            "embedded boundaries.")
@@ -453,8 +448,7 @@ template <int D> void bindAPI(py::module &module) {
            py::arg("source"),
            "Per-cell volumetric source term S added to dc/dt = D∇²c + S. "
            "Pass an empty list to clear.")
-      .def("clearSourceField",
-           &Anneal<T, D>::clearSourceField,
+      .def("clearSourceField", &Anneal<T, D>::clearSourceField,
            "Remove any previously set concentration source field.")
       .def("apply", &Anneal<T, D>::apply)
       .def("applyActivation", &Anneal<T, D>::applyActivation,
@@ -463,9 +457,12 @@ template <int D> void bindAPI(py::module &module) {
            "'diffuse time=0'.  Requires setCellSet(), enableSolidActivation(), "
            "and setSolidSolubilityArrhenius() to be configured first.");
 
-  // ── SheetResistance ─────────────────────────────────────────────────────────
-  py::class_<SheetResistance<T, D>>(module, "SheetResistance",
-      "Compute sheet resistance (Rsh, Ω/□) from a concentration field stored in\n"
+  // ── SheetResistance
+  // ─────────────────────────────────────────────────────────
+  py::class_<SheetResistance<T, D>>(
+      module, "SheetResistance",
+      "Compute sheet resistance (Rsh, Ω/□) from a concentration field stored "
+      "in\n"
       "a DenseCellSet.\n\n"
       "Default configuration targets ViennaPS nm-unit domains:\n"
       "  length unit = 1e-7 (nm → cm),  conc unit = 1e21 (nm⁻³ → cm⁻³),\n"
@@ -477,19 +474,15 @@ template <int D> void bindAPI(py::module &module) {
       "  sr.setConcentrationLabel(\"P_active\")\n"
       "  rsh = sr.computeElectron()   # Masetti n-type (P in Si)")
       .def(py::init<>())
-      .def("setCellSet", &SheetResistance<T, D>::setCellSet,
-           py::arg("cellSet"),
+      .def("setCellSet", &SheetResistance<T, D>::setCellSet, py::arg("cellSet"),
            "Attach the DenseCellSet to analyse.")
       .def("setConcentrationLabel",
-           &SheetResistance<T, D>::setConcentrationLabel,
-           py::arg("label"),
+           &SheetResistance<T, D>::setConcentrationLabel, py::arg("label"),
            "Name of the scalar field holding the active concentration "
            "(default: 'active_concentration').")
       .def("setDepthAxis", &SheetResistance<T, D>::setDepthAxis,
-           py::arg("axis"),
-           "Cell-centre axis index for depth  (default: D−1).")
-      .def("setSurfacePosition",
-           &SheetResistance<T, D>::setSurfacePosition,
+           py::arg("axis"), "Cell-centre axis index for depth  (default: D−1).")
+      .def("setSurfacePosition", &SheetResistance<T, D>::setSurfacePosition,
            py::arg("surfacePosition"),
            "Wafer-surface coordinate along the depth axis. Depth is computed "
            "as surfacePosition minus the cell-centre coordinate.")
@@ -498,8 +491,7 @@ template <int D> void bindAPI(py::module &module) {
            "Conversion factor from domain length unit to cm "
            "(default: 1e-7 for nm domains). "
            "Also updates the concentration unit to stay consistent.")
-      .def("setConcentrationUnit",
-           &SheetResistance<T, D>::setConcentrationUnit,
+      .def("setConcentrationUnit", &SheetResistance<T, D>::setConcentrationUnit,
            py::arg("unit"),
            "Multiplicative factor to convert the cell-set concentration to "
            "cm⁻³ (default: 1e21 for nm⁻³ fields).")
@@ -510,8 +502,10 @@ template <int D> void bindAPI(py::module &module) {
            "Rsh [Ω/□] using the Masetti-Severi hole mobility model "
            "(p-type, e.g. B-doped Si).");
 
-  // ── NetDoping ────────────────────────────────────────────────────────────────
-  py::class_<NetDoping<T, D>>(module, "NetDoping",
+  // ── NetDoping
+  // ────────────────────────────────────────────────────────────────
+  py::class_<NetDoping<T, D>>(
+      module, "NetDoping",
       "Compute net doping (Σ donors − Σ acceptors) and extract the\n"
       "metallurgical junction depth from a DenseCellSet.\n\n"
       "Donor and acceptor labels typically refer to active-concentration\n"
@@ -525,26 +519,20 @@ template <int D> void bindAPI(py::module &module) {
       "  nd.apply()                      # writes 'net_doping' field\n"
       "  xj = nd.junctionDepth()         # nm from surface")
       .def(py::init<>())
-      .def("setCellSet", &NetDoping<T, D>::setCellSet,
-           py::arg("cellSet"),
+      .def("setCellSet", &NetDoping<T, D>::setCellSet, py::arg("cellSet"),
            "Attach the DenseCellSet to analyse.")
-      .def("addDonorLabel", &NetDoping<T, D>::addDonorLabel,
-           py::arg("label"),
+      .def("addDonorLabel", &NetDoping<T, D>::addDonorLabel, py::arg("label"),
            "Append one donor (n-type) concentration field name.")
       .def("addAcceptorLabel", &NetDoping<T, D>::addAcceptorLabel,
            py::arg("label"),
            "Append one acceptor (p-type) concentration field name.")
       .def("setDonorLabels", &NetDoping<T, D>::setDonorLabels,
-           py::arg("labels"),
-           "Replace the donor label list.")
+           py::arg("labels"), "Replace the donor label list.")
       .def("setAcceptorLabels", &NetDoping<T, D>::setAcceptorLabels,
-           py::arg("labels"),
-           "Replace the acceptor label list.")
-      .def("setOutputLabel", &NetDoping<T, D>::setOutputLabel,
-           py::arg("label"),
+           py::arg("labels"), "Replace the acceptor label list.")
+      .def("setOutputLabel", &NetDoping<T, D>::setOutputLabel, py::arg("label"),
            "Name of the output scalar field (default: 'net_doping').")
-      .def("setDepthAxis", &NetDoping<T, D>::setDepthAxis,
-           py::arg("axis"),
+      .def("setDepthAxis", &NetDoping<T, D>::setDepthAxis, py::arg("axis"),
            "Cell-centre axis index for depth (default: D−1).")
       .def("setSurfacePosition", &NetDoping<T, D>::setSurfacePosition,
            py::arg("surfacePosition"),
@@ -561,16 +549,14 @@ template <int D> void bindAPI(py::module &module) {
            "Useful for retrograde profiles with multiple sign changes.")
       .def("junctionCount", &NetDoping<T, D>::junctionCount,
            "Number of metallurgical junctions (net_doping sign changes).")
-      .def("lateralJunctionPosition",
-           &NetDoping<T, D>::lateralJunctionPosition,
+      .def("lateralJunctionPosition", &NetDoping<T, D>::lateralJunctionPosition,
            py::arg("atDepth"),
            "Shallowest lateral position [domain length units] where net_doping "
            "changes sign at the given depth.  Use for vertical (lateral) PN "
            "junctions where P and B are implanted side by side.  Returns inf "
            "if no lateral junction exists at that depth.")
       .def("lateralJunctionPositions",
-           &NetDoping<T, D>::lateralJunctionPositions,
-           py::arg("atDepth"),
+           &NetDoping<T, D>::lateralJunctionPositions, py::arg("atDepth"),
            "All lateral junction positions at the given depth, sorted "
            "ascending.");
 }
