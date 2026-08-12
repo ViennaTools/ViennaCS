@@ -165,8 +165,14 @@ public:
     const NumericType maxX = boundingBox[1][0];
     const NumericType minY = boundingBox[0][1];
     const NumericType maxY = boundingBox[1][1];
-    const NumericType minZ = boundingBox[0][2];
-    const NumericType maxZ = boundingBox[1][2];
+    // A Z extent exists only in 3D. For D == 2 the bounding-box corners have no
+    // third component, so reading [2] would run past the end of the vector.
+    NumericType minZ = 0;
+    NumericType maxZ = 0;
+    if constexpr (D == 3) {
+      minZ = boundingBox[0][2];
+      maxZ = boundingBox[1][2];
+    }
 
     NumericType xLength = std::abs(maxX - minX);
     NumericType yLength = std::abs(maxY - minY);

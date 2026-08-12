@@ -92,7 +92,7 @@ We recommend using [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake) to consum
 
 * Installation with CPM
   ```cmake
-  CPMAddPackage("gh:viennatools/viennacs@2.1.0")
+  CPMAddPackage("gh:viennatools/viennacs@2.1.1")
   ```
 
 * With a local installation
