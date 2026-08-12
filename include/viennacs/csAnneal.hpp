@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -603,6 +605,8 @@ public:
         return;
 
       NumericType time = NumericType(0);
+      std::size_t dbgStep = 0;                   // DEBUG(anneal-trace)
+      constexpr std::size_t dbgStepCap = 100000; // DEBUG(anneal-trace)
       while (time < segmentDuration) {
         const auto remaining = segmentDuration - time;
         NumericType localTemperatureK = startTemperatureK;
@@ -629,6 +633,19 @@ public:
                 stabilityFactor_ * effectiveDx * effectiveDx /
                 (NumericType(2) * static_cast<NumericType>(D) *
                  diffusionCoefficient);
+            if (dbgStep == 0) { // DEBUG(anneal-trace)
+              std::fprintf(
+                  stderr,
+                  "[ANNEAL-TRACE] T=%.6g Dcoeff=%.6g dx=%.6g D=%d useEmb=%d "
+                  "effDx=%.6g stabF=%.6g maxStableDt=%.6g timeStep=%.6g "
+                  "segDur=%.6g tedStatic=%.6g defectMaxDt=%.6g\n",
+                  (double)localTemperatureK, (double)diffusionCoefficient,
+                  (double)dx, (int)D, (int)useEmbedded, (double)effectiveDx,
+                  (double)stabilityFactor_, (double)maxStableDt,
+                  (double)timeStep_, (double)segmentDuration,
+                  (double)tedStaticFactor_, (double)defectMaxTimeStep_);
+              std::fflush(stderr);
+            }
             if (dt <= NumericType(0))
               dt = maxStableDt;
             else
@@ -650,6 +667,20 @@ public:
         if (tedStaticFactor_ > NumericType(0) &&
             defectMaxTimeStep_ > NumericType(0))
           dt = std::min(dt, defectMaxTimeStep_);
+
+        if (dbgStep == 0) { // DEBUG(anneal-trace): dt after all clamps
+          std::fprintf(stderr, "[ANNEAL-TRACE] dtFinal=%.6g\n", (double)dt);
+          std::fflush(stderr);
+        }
+        if (++dbgStep > dbgStepCap) { // DEBUG(anneal-trace)
+          std::fprintf(stderr,
+                       "[ANNEAL-TRACE] STEP-CAP-HIT step=%llu time=%.6g "
+                       "dt=%.6g segDur=%.6g -> breaking segment\n",
+                       (unsigned long long)dbgStep, (double)time, (double)dt,
+                       (double)segmentDuration);
+          std::fflush(stderr);
+          break;
+        }
 
         if (useDefectCoupling && interstitial && vacancy) {
           if (interstitialDiffusivity_ > NumericType(0)) {
