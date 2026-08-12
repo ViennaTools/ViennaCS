@@ -928,7 +928,13 @@ private:
         const unsigned axis = static_cast<unsigned>(pt.axis);
         const T delta = pt.coordinate[axis] - center[axis];
         const unsigned faceIdx = axis * 2u + (delta > T(0) ? 1u : 0u);
-        const T dist = std::abs(delta);
+        // A level-set boundary point can land on (or, under different FP
+        // rounding across compilers, numerically at) a cell center, giving
+        // dist ~ 0. Such a distance is unresolvable for the explicit stencil
+        // and collapses the CFL-stable time step, stalling the anneal
+        // sub-stepping loop. Floor it at a small fraction of the grid spacing
+        // so both the stencil and the stable time-step estimate stay bounded.
+        const T dist = std::max(std::abs(delta), gridDelta * T(0.1));
         // Keep the closest boundary point per face when multiple exist.
         if (cellFaceBoundaryPointId[cellId][faceIdx] < 0 ||
             dist < cellFaceBoundaryDistance[cellId][faceIdx]) {
