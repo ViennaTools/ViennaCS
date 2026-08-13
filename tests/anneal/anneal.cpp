@@ -138,6 +138,11 @@ void testDiffusionSpreads() {
 
   anneal.apply();
 
+  // apply() may add scalar arrays, reallocating PointData::scalarData and
+  // dangling pointers taken before it. Re-fetch before reading.
+  field = cellSet->getScalarData("concentration");
+  mats = cellSet->getScalarData("Material");
+
   // Peak in substrate must have decreased
   T newPeak = 0.;
   T sumAfter = 0.;
@@ -187,6 +192,11 @@ void testSolidActivation() {
 
   anneal.apply();
 
+  // apply() calls addScalarData("active_concentration"), which push_back()s
+  // into PointData::scalarData and reallocates it, dangling every pointer
+  // obtained before apply(). Re-fetch all of them here.
+  field = cellSet->getScalarData("concentration");
+  mats = cellSet->getScalarData("Material");
   auto active = cellSet->getScalarData("active_concentration");
   VC_TEST_ASSERT(active != nullptr);
 
