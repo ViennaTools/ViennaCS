@@ -207,6 +207,43 @@ void checkShadowing() {
             std::to_string(ratioHigh) + " at s = 1");
 }
 
+/// The same blanket, but with the surface deliberately BETWEEN cell centres,
+/// so the fractions are partial rather than zero and one.
+///
+/// This is the case that hid a real fault. A surface at a cell boundary gives
+/// an exactly binary geometry, where a ray meets one solid cell, re-emits, and
+/// is gone. Make it fractional and the interface is two or three cells thick,
+/// and a ray re-emitted from inside it can interact again immediately -- at
+/// full weight, where the sticking is small, over and over. The measured flux
+/// climbed from an incident 1000 to 1600 as a silane surface advanced, and the
+/// growth rate went with it. Every check here passed throughout, because every
+/// one of them put the surface on a cell boundary.
+template <int D> void checkPartialProfile(const std::string &label) {
+  const T gridDelta = 1.0;
+  auto cellSet = makeDomain<D>(gridDelta, -12., 12.);
+  cs::LatticeMap<T, D> lattice(cellSet);
+
+  for (const T offset : {T(0.5), T(0.3)}) {
+    for (const T sticking : {T(1.0), T(0.3), T(4.4e-4)}) {
+      std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
+      cs::fillFromSignedDistance<T, D>(
+          lattice, fill, [&](const viennacore::Vec3D<T> &p) {
+            return p[D - 1] - offset;
+          });
+      cs::VoxelFlux<T, D> flux(lattice, fill);
+      const T sourceFlux = 100.0;
+      const auto result =
+          flux.trace(D == 2 ? 200000 : 400000, sourceFlux, sticking);
+      const T mean = meanSurfaceFlux<D>(lattice, result.flux, 4, fill);
+      check(label + ": a partial interface measures the incident flux",
+            std::abs(mean / sourceFlux - 1.0) < 0.06,
+            "offset " + std::to_string(offset) + ", sticking " +
+                std::to_string(sticking) + " -> " +
+                std::to_string(mean / sourceFlux) + " of the source");
+    }
+  }
+}
+
 int main() {
   std::cout << "Voxel flux: what the surface receives\n\n";
 
@@ -214,7 +251,11 @@ int main() {
   checkBlanketNormalisation<2>("2D");
   checkBlanketNormalisation<3>("3D");
 
-  std::cout << "\n2) shadowing in a trench\n";
+  std::cout << "\n2) a partial interface, which is where a ray can re-enter\n";
+  checkPartialProfile<2>("2D");
+  checkPartialProfile<3>("3D");
+
+  std::cout << "\n3) shadowing in a trench\n";
   checkShadowing();
 
   std::cout << "\n";

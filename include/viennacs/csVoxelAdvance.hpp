@@ -238,6 +238,34 @@ public:
       change[target] += volume / cellVolume;
     }
 
+    // The direction surplus travels must be read from the surface BEFORE it
+    // is disturbed. Reading it afterwards asks the gradient of a field that
+    // may hold values above one and that is degenerate at a cell just filled
+    // to capacity; the axis then comes back lateral as often as not, and
+    // surplus walks sideways into the neighbouring column instead of forward
+    // into the void. On a flat blanket that showed up as columns differing by
+    // thirteen cells of material while every fraction was a legal one.
+    std::vector<int> pushAxis(fill.size(), -1);
+    std::vector<int> pushDir(fill.size(), 0);
+    for (size_t flat = 0; flat < sites; ++flat) {
+      unflatten(flat);
+      const int id = lattice_->cellId(idx);
+      if (id < 0)
+        continue;
+      const auto g = fillGradient(fill, idx);
+      int axis = 0;
+      T best = 0;
+      for (int d = 0; d < D; ++d)
+        if (std::abs(g[d]) > best) {
+          best = std::abs(g[d]);
+          axis = d;
+        }
+      if (best > T(1e-12)) {
+        pushAxis[id] = axis;
+        pushDir[id] = g[axis] > 0 ? 1 : -1; // outward, towards the void
+      }
+    }
+
     for (size_t i = 0; i < fill.size(); ++i)
       fill[i] += change[i];
 
@@ -245,7 +273,17 @@ public:
     // neighbour the surface is advancing into; a cell under zero takes the
     // deficit from the neighbour behind it. Repeat, because that neighbour may
     // overflow in turn.
-    for (int sweep = 0; sweep < 2 * D + 2; ++sweep) {
+    //
+    // The sweep count has to be generous, not a small constant. Surplus moves
+    // one cell per sweep, so a step that deposits more than a couple of cells'
+    // worth into one place -- which happens as soon as the velocity is not
+    // uniform -- needs more passes than a fixed handful. Stopping early leaves
+    // fractions above one, and a fraction above one is not a surface at all:
+    // it is volume that the geometry cannot represent and that every later
+    // measurement counts anyway. Silane reached 5.67 that way, and reported
+    // twice the growth it had.
+    const int maxSweeps = static_cast<int>(dims[0]) * 4;
+    for (int sweep = 0; sweep < maxSweeps; ++sweep) {
       bool moved = false;
       for (size_t flat = 0; flat < sites; ++flat) {
         unflatten(flat);
@@ -258,20 +296,15 @@ public:
 
         const bool overflowing = f > T(1);
         const T surplus = overflowing ? f - T(1) : f; // signed
-        const auto g = fillGradient(fill, idx);
-        // Outward, i.e. towards the void, is +grad since g = -grad(f).
-        int axis = 0;
-        T best = 0;
-        for (int d = 0; d < D; ++d)
-          if (std::abs(g[d]) > best) {
-            best = std::abs(g[d]);
-            axis = d;
-          }
-        int direction = 0;
-        if (best > T(1e-12))
-          direction = g[axis] > 0 ? 1 : -1;
-        else
-          direction = 1; // no interface to read: pick an axis and be consistent
+        int axis = pushAxis[id];
+        int direction = pushDir[id];
+        if (axis < 0) {
+          // No interface here before the step: fall back to the axis the
+          // surface as a whole is moving along, which for a grid built from a
+          // level set is the last one.
+          axis = D - 1;
+          direction = 1;
+        }
         if (!overflowing)
           direction = -direction; // a deficit eats backwards, into the solid
 
@@ -292,8 +325,19 @@ public:
         break;
     }
 
-    for (size_t i = 0; i < fill.size(); ++i)
+    // Nothing may be left out of range. If it is, the surplus had nowhere to
+    // go and the geometry is not representable -- report it as lost rather
+    // than let it stand as a fraction above one.
+    for (size_t i = 0; i < fill.size(); ++i) {
+      if (fill[i] > T(1)) {
+        step.volumeLost += (fill[i] - T(1)) * cellVolume;
+        fill[i] = T(1);
+      } else if (fill[i] < T(0)) {
+        step.volumeLost += fill[i] * cellVolume;
+        fill[i] = T(0);
+      }
       step.volumeApplied += fill[i] * cellVolume;
+    }
     return step;
   }
 };

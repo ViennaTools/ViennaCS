@@ -168,9 +168,19 @@ public:
   /// encounter; the rest is re-emitted diffusely about the local normal. A
   /// sticking of one gives line of sight, which is the limit where shadowing
   /// is strongest.
+  /// `smoothingNeighbors` averages the flux over that many rings of the
+  /// interface once it has been normalised, matching what ViennaPS does for
+  /// the level-set arm, where RayTracingParameters::smoothingNeighbors is 1 by
+  /// default and every engine applies it. Leaving it out here would not merely
+  /// be noisier -- it would be a different transport convention, and the
+  /// comparison is only about the geometry if everything else matches.
+  ///
+  /// It matters more than tidiness. Surface velocity is a nonlinear function
+  /// of flux, and a growing front is unstable to noise in it: a cell that
+  /// samples high grows faster, protrudes, and then genuinely collects more.
   Result trace(size_t numRays, T sourceFlux, T sticking,
                T cosinePower = T(1), unsigned seed = 1,
-               T weightCutoff = T(1e-4)) const {
+               T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
     const auto &dims = lattice_->dims();
     const auto &minCorner = lattice_->minCorner();
     const T delta = lattice_->gridDelta();
@@ -227,15 +237,43 @@ public:
         if (weight <= rayRate * weightCutoff)
           break;
 
-        // Re-emit about the local normal, from just outside the cell so the
-        // walk does not immediately re-enter the cell it left.
+        // Re-emit about the local normal, from OUTSIDE the interface.
+        //
+        // A fractional interface is two or three cells thick, so a ray nudged
+        // out by a fraction of a cell is still inside it and can interact
+        // again immediately -- and where the sticking is small it keeps its
+        // full weight and deposits that full weight every time. On a binary
+        // geometry this cannot happen: the ray leaves the one solid cell and
+        // is gone. On a fractional one it inflated the measured flux from an
+        // incident 1000 to 1600 over a few steps, and the growth rate with it.
+        //
+        // So the ray is placed past the last cell holding any material along
+        // its outward normal. Having left the surface, it restarts outside it.
         Vec3D<T> normal3{0, 0, 0};
         for (int d = 0; d < D; ++d)
           normal3[d] = hit.normal[d];
-        const auto newDir =
-            viennaray::ReflectionDiffuse<T, D>(normal3, rng);
+        const auto newDir = viennaray::ReflectionDiffuse<T, D>(normal3, rng);
+
+        int axis = 0;
+        T steepest = 0;
+        for (int d = 0; d < D; ++d)
+          if (std::abs(normal3[d]) > steepest) {
+            steepest = std::abs(normal3[d]);
+            axis = d;
+          }
+        const int outward = normal3[axis] > 0 ? 1 : -1;
+        int clear = 1;
+        auto probe = hit.index;
+        for (int stepOut = 0; stepOut < 8; ++stepOut) {
+          probe[axis] += outward;
+          const int nid = lattice_->cellId(probe);
+          if (nid < 0 || (*fill_)[nid] <= T(1e-9))
+            break;
+          ++clear;
+        }
         for (int d = 0; d < D; ++d) {
-          origin[d] = hit.point[d] + normal3[d] * delta * T(1e-3);
+          origin[d] = hit.point[d] +
+                      normal3[d] * delta * (static_cast<T>(clear) + T(1e-3));
           direction[d] = newDir[d];
         }
         ++result.reemissions;
@@ -267,7 +305,65 @@ public:
       if (area > T(1e-2) * faceArea)
         result.flux[id] = collected[id] / area;
     }
+
+    smooth(result.flux, smoothingNeighbors);
     return result;
+  }
+
+  /// Area-weighted average of the flux over the interface neighbourhood.
+  void smooth(std::vector<T> &flux, int rings) const {
+    if (rings <= 0)
+      return;
+    const T delta = lattice_->gridDelta();
+    T faceArea = 1;
+    for (int d = 0; d < D - 1; ++d)
+      faceArea *= delta;
+    const T minArea = T(1e-2) * faceArea;
+
+    const auto &dims = lattice_->dims();
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+    const int width = 2 * rings + 1;
+    int span = 1;
+    for (int d = 0; d < D; ++d)
+      span *= width;
+
+    std::vector<T> smoothed = flux;
+    std::array<int, D> idx{};
+    for (size_t flat = 0; flat < sites; ++flat) {
+      size_t rem = flat;
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id < 0)
+        continue;
+      if (areas_.interfaceArea(*fill_, idx) <= minArea)
+        continue;
+
+      T sum = 0, weight = 0;
+      for (int s = 0; s < span; ++s) {
+        std::array<int, D> probe = idx;
+        int r = s;
+        for (int d = 0; d < D; ++d) {
+          probe[d] += r % width - rings;
+          r /= width;
+        }
+        const int nid = lattice_->cellId(probe);
+        if (nid < 0)
+          continue;
+        const T area = areas_.interfaceArea(*fill_, probe);
+        if (area <= minArea)
+          continue;
+        sum += flux[nid] * area;
+        weight += area;
+      }
+      if (weight > T(0))
+        smoothed[id] = sum / weight;
+    }
+    flux.swap(smoothed);
   }
 };
 
