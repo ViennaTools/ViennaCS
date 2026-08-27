@@ -35,15 +35,27 @@ using namespace viennacore;
 ///                 is quantised with it. This is the staircase in its
 ///                 undisguised form.
 ///
-///   FillGradient  -grad(f) by central differences. Smooth, and it recovers a
-///                 tilted surface, but a smoothed gradient of a volume
-///                 fraction IS an implicit surface reconstruction. The
-///                 "voxels need no surface" argument does not survive contact
-///                 with an ion yield that depends on cos(theta).
+///   FillGradient  -grad(f) by three-point central differences. Cheap, and
+///                 exact where the surface lies along a lattice axis or its
+///                 diagonal -- and worst between them, by around ten degrees.
+///                 The stencil is anisotropic, so this is not what a voxel
+///                 method should be judged on.
+///
+///   FillGradientYoungs
+///                 -grad(f) over the whole 3^D neighbourhood, weighted
+///                 (1,2,1) across each axis, as in Youngs' method for volume
+///                 of fluid. Isotropic enough that the direction of the
+///                 surface stops mattering.
+///
+/// The last two are still surface reconstruction, implicit rather than
+/// explicit: a smoothed gradient of a volume fraction is an interface normal
+/// by another name. The claim that voxels avoid reconstructing a surface does
+/// not survive contact with an ion yield that depends on cos(theta). What is
+/// true is that the reconstruction is local and never stored.
 ///
 /// A comparison against a level set that reports only one of these has
-/// answered only half the question, so both are here and switchable.
-enum class NormalEstimator { Face, FillGradient };
+/// answered only part of the question, so all three are here and switchable.
+enum class NormalEstimator { Face, FillGradient, FillGradientYoungs };
 
 template <class T, int D> struct VoxelHit {
   int cellId = -1;
@@ -73,26 +85,73 @@ public:
   void setNormalEstimator(NormalEstimator e) { estimator_ = e; }
   NormalEstimator normalEstimator() const { return estimator_; }
 
-  /// The filling fraction at a lattice coordinate; zero where there is no cell.
+  /// The filling fraction at a lattice coordinate; zero where there is no
+  /// cell, because a ray that leaves the grid must find nothing to hit.
   T fillAt(const std::array<int, D> &idx) const {
     const int id = lattice_->cellId(idx);
     return id < 0 ? T(0) : (*fill_)[id];
   }
 
-  /// -grad(f), by central differences, normalised. Falls back to the face
-  /// normal where the gradient vanishes, which happens inside a uniformly
-  /// filled region and at an isolated cell.
+  /// The same, for a DERIVATIVE: the lattice boundary is a cut through the
+  /// material, not a surface, so the field continues across it with zero
+  /// gradient. Reading zero instead would give every cell on the edge of the
+  /// domain a normal pointing out of it.
+  T fillClamped(const std::array<int, D> &idx) const {
+    auto inside = idx;
+    for (int d = 0; d < D; ++d)
+      inside[d] = std::min(std::max(inside[d], 0), lattice_->dims()[d] - 1);
+    return fillAt(inside);
+  }
+
+  /// -grad(f), normalised. Falls back to the face normal where the gradient
+  /// vanishes, which happens inside a uniformly filled region and at an
+  /// isolated cell.
+  ///
+  /// `wide` sweeps the whole 3^D neighbourhood with a (1,2,1) weight across
+  /// each axis other than the one being differenced -- Youngs' stencil. The
+  /// narrow form differences only the two face neighbours, which is cheaper
+  /// and markedly more anisotropic.
   Vec3D<T> gradientNormal(const std::array<int, D> &idx,
-                          const Vec3D<T> &faceNormal) const {
+                          const Vec3D<T> &faceNormal, bool wide) const {
     Vec3D<T> n{0, 0, 0};
-    T norm = 0;
-    for (int d = 0; d < D; ++d) {
-      auto lo = idx, hi = idx;
-      lo[d] -= 1;
-      hi[d] += 1;
-      n[d] = T(0.5) * (fillAt(lo) - fillAt(hi)); // -d(fill)/dx
-      norm += n[d] * n[d];
+
+    if (!wide) {
+      for (int d = 0; d < D; ++d) {
+        auto lo = idx, hi = idx;
+        lo[d] -= 1;
+        hi[d] += 1;
+        n[d] = T(0.5) * (fillClamped(lo) - fillClamped(hi)); // -d(fill)/dx
+      }
+    } else {
+      int span = 1;
+      for (int d = 0; d < D; ++d)
+        span *= 3;
+      for (int s = 0; s < span; ++s) {
+        std::array<int, D> offset{};
+        int rem = s;
+        for (int d = 0; d < D; ++d) {
+          offset[d] = rem % 3 - 1;
+          rem /= 3;
+        }
+        auto probe = idx;
+        for (int d = 0; d < D; ++d)
+          probe[d] += offset[d];
+        const T f = fillClamped(probe);
+        for (int d = 0; d < D; ++d) {
+          if (offset[d] == 0)
+            continue;
+          T weight = 1;
+          for (int k = 0; k < D; ++k)
+            if (k != d)
+              weight *= (offset[k] == 0) ? T(2) : T(1);
+          n[d] -= static_cast<T>(offset[d]) * weight * f; // -d(fill)/dx
+        }
+      }
     }
+
+    T norm = 0;
+    for (int d = 0; d < D; ++d)
+      norm += n[d] * n[d];
     norm = std::sqrt(norm);
     if (norm < T(1e-12))
       return faceNormal;
@@ -153,9 +212,12 @@ public:
             faceNormal[axis] = static_cast<T>(result.enteredSign);
           }
 
-          result.normal = estimator_ == NormalEstimator::Face
-                              ? faceNormal
-                              : gradientNormal(step.index, faceNormal);
+          result.normal =
+              estimator_ == NormalEstimator::Face
+                  ? faceNormal
+                  : gradientNormal(step.index, faceNormal,
+                                   estimator_ ==
+                                       NormalEstimator::FillGradientYoungs);
           return false; // stop: the ray has met the surface
         }
       }

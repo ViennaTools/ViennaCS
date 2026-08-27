@@ -1,0 +1,274 @@
+#pragma once
+
+#include "csVoxelAdvance.hpp"
+
+#include <rayReflection.hpp>
+#include <raySourceRandom.hpp>
+#include <rayUtil.hpp>
+
+namespace viennacs {
+
+using namespace viennacore;
+
+/// Monte Carlo flux onto a voxel geometry.
+///
+/// Rays are launched from ViennaRay's own source and reflected by ViennaRay's
+/// own laws, neither of which touches embree. That is deliberate: a comparison
+/// between a level-set and a voxel simulation is only about the geometry if
+/// everything else is shared, and the source distribution and the reflection
+/// are everything else. What differs is how a ray finds the surface -- a walk
+/// through cells here, a BVH descent over triangles there -- and what normal
+/// it meets when it does.
+///
+/// NORMALISATION is the part to get right, and the part that decides whether
+/// the two arms can be compared at all. A ray carries a rate, source flux
+/// times source area over the ray count. A cell accumulates rates and divides
+/// by the interface area it presents, which turns them back into the flux
+/// density a rate law expects. On a flat surface facing an unobstructed
+/// source, that has to give back the source flux exactly; if it does not, no
+/// profile computed from it means anything.
+template <class T, int D> class VoxelFlux {
+  const LatticeMap<T, D> *lattice_ = nullptr;
+  const std::vector<T> *fill_ = nullptr;
+  VoxelInteraction<T, D> interaction_;
+  VoxelAdvance<T, D> areas_;
+  GridTraversal<T, D> traversal_;
+
+public:
+  VoxelFlux(const LatticeMap<T, D> &lattice, const std::vector<T> &fill,
+            NormalEstimator estimator = NormalEstimator::FillGradientYoungs,
+            AreaEstimator areaEstimator = AreaEstimator::Gradient)
+      : lattice_(&lattice), fill_(&fill),
+        interaction_(lattice, fill, estimator), areas_(lattice, areaEstimator),
+        traversal_(lattice) {}
+
+  /// Credits `amount` to the interface at `idx`, spread over the local
+  /// interface in proportion to the area each cell carries.
+  ///
+  /// Not to the single cell the ray interacted in, which is what a binary
+  /// voxel code does and what this did at first. Across a smeared interface
+  /// that is wrong: a ray meeting a cell of fill 0.3 passes through it seven
+  /// times in ten, so the deeper cell collects more while carrying less area.
+  /// On a blanket, where the answer is known, that gives 90 and 160 on one
+  /// physical surface whose true density is 100, with the outermost interface
+  /// cell collecting nothing at all -- a cell that would then refuse to move
+  /// while its neighbour moved twice as fast.
+  ///
+  /// Giving each cell a share of the flux equal to its share of the area makes
+  /// the density uniform across the smear by construction. The premise is the
+  /// same as Youngs' stencil: the interface is a neighbourhood, not a cell.
+  ///
+  /// The cost is at a corner, where the neighbourhood straddles two surfaces
+  /// and flux leaks between them over one cell. That is real, and it is the
+  /// resolution limit rather than a choice: a one-cell neighbourhood cannot
+  /// tell a corner from a smear.
+  void deposit(std::vector<T> &collected, const std::array<int, D> &idx,
+               T amount) const {
+    int span = 1;
+    for (int d = 0; d < D; ++d)
+      span *= 3;
+
+    T totalArea = 0;
+    for (int s = 0; s < span; ++s) {
+      std::array<int, D> probe = idx;
+      int rem = s;
+      for (int d = 0; d < D; ++d) {
+        probe[d] += rem % 3 - 1;
+        rem /= 3;
+      }
+      if (lattice_->cellId(probe) < 0)
+        continue;
+      totalArea += areas_.interfaceArea(*fill_, probe);
+    }
+    if (totalArea <= T(0)) {
+      const int id = lattice_->cellId(idx);
+      if (id >= 0)
+        collected[id] += amount;
+      return;
+    }
+    for (int s = 0; s < span; ++s) {
+      std::array<int, D> probe = idx;
+      int rem = s;
+      for (int d = 0; d < D; ++d) {
+        probe[d] += rem % 3 - 1;
+        rem /= 3;
+      }
+      const int id = lattice_->cellId(probe);
+      if (id < 0)
+        continue;
+      const T area = areas_.interfaceArea(*fill_, probe);
+      if (area > T(0))
+        collected[id] += amount * area / totalArea;
+    }
+  }
+
+  /// Follows a ray until it meets the surface or leaves through the top.
+  ///
+  /// The lateral boundaries are reflective, as they are in a ViennaPS domain:
+  /// a feature is one period of something repeating, not an island. Without
+  /// this a ray launched obliquely near the edge simply walks out of the
+  /// domain, and the surface measures less flux than was sent -- by a third in
+  /// 2D and more than half in 3D, which looks exactly like a normalisation
+  /// error and is in fact a missing boundary. ViennaRay's own boundary is
+  /// embree geometry, so it is the one piece of its transport that cannot be
+  /// borrowed here.
+  template <class RNG>
+  VoxelHit<T, D> traceToSurface(std::array<T, D> origin,
+                                std::array<T, D> direction, RNG &rng) const {
+    const T delta = lattice_->gridDelta();
+    const auto &dims = lattice_->dims();
+    const auto &minCorner = lattice_->minCorner();
+
+    for (int crossing = 0; crossing < 64; ++crossing) {
+      const auto hit = interaction_.firstHit(origin, direction, rng);
+      if (hit.hit())
+        return hit;
+
+      // No hit: find where it left, and mirror it if that was a side.
+      T tNear = 0, tFar = 0;
+      if (!traversal_.clip(origin, direction, tNear, tFar))
+        return hit; // it never entered the grid at all
+
+      std::array<T, D> exit{};
+      for (int d = 0; d < D; ++d)
+        exit[d] = origin[d] + direction[d] * tFar;
+
+      int axis = -1;
+      T closest = std::numeric_limits<T>::max();
+      for (int d = 0; d < D - 1; ++d) { // lateral axes only
+        const T lo = minCorner[d];
+        const T hi = minCorner[d] + delta * static_cast<T>(dims[d]);
+        const T distance = std::min(std::abs(exit[d] - lo), std::abs(exit[d] - hi));
+        if (distance < closest) {
+          closest = distance;
+          axis = d;
+        }
+      }
+      if (axis < 0 || closest > T(1e-6) * delta)
+        return hit; // it left through the top or the bottom: gone
+
+      direction[axis] = -direction[axis];
+      for (int d = 0; d < D; ++d)
+        origin[d] = exit[d];
+      origin[axis] += direction[axis] * delta * T(1e-6);
+    }
+    return VoxelHit<T, D>{};
+  }
+
+  struct Result {
+    std::vector<T> flux;    ///< per cell, in the units of `sourceFlux`
+    size_t raysTraced = 0;
+    size_t raysAbsorbed = 0; ///< rays that met the surface at least once
+    size_t reemissions = 0;
+  };
+
+  /// Traces `numRays` and returns the flux density on every cell.
+  ///
+  /// `sticking` is the fraction of a ray's remaining rate deposited at each
+  /// encounter; the rest is re-emitted diffusely about the local normal. A
+  /// sticking of one gives line of sight, which is the limit where shadowing
+  /// is strongest.
+  Result trace(size_t numRays, T sourceFlux, T sticking,
+               T cosinePower = T(1), unsigned seed = 1,
+               T weightCutoff = T(1e-4)) const {
+    const auto &dims = lattice_->dims();
+    const auto &minCorner = lattice_->minCorner();
+    const T delta = lattice_->gridDelta();
+
+    // The source spans the top of the lattice, looking down.
+    std::array<Vec3D<T>, 2> boundingBox;
+    for (int d = 0; d < 3; ++d) {
+      boundingBox[0][d] = 0;
+      boundingBox[1][d] = 0;
+    }
+    for (int d = 0; d < D; ++d) {
+      boundingBox[0][d] = minCorner[d];
+      boundingBox[1][d] = minCorner[d] + delta * static_cast<T>(dims[d]);
+    }
+    const auto settings = rayInternal::getTraceSettings(
+        D == 2 ? viennaray::TraceDirection::POS_Y
+               : viennaray::TraceDirection::POS_Z);
+    std::array<Vec3D<T>, 3> basis{};
+    viennaray::SourceRandom<T, D> source(boundingBox, cosinePower, settings,
+                                         numRays, false, basis);
+
+    Result result;
+    result.flux.assign(fill_->size(), T(0));
+    result.raysTraced = numRays;
+
+    const T rayRate = sourceFlux * source.getSourceArea() /
+                      static_cast<T>(numRays);
+
+    RNG rng(seed);
+    std::vector<T> collected(fill_->size(), T(0));
+
+    for (size_t r = 0; r < numRays; ++r) {
+      auto [origin3, direction3] = source.getOriginAndDirection(r, rng);
+      std::array<T, D> origin{}, direction{};
+      for (int d = 0; d < D; ++d) {
+        origin[d] = origin3[d];
+        direction[d] = direction3[d];
+      }
+
+      T weight = rayRate;
+      bool absorbed = false;
+      for (int bounce = 0; bounce < 1000; ++bounce) {
+        const auto hit = traceToSurface(origin, direction, rng);
+        if (!hit.hit())
+          break;
+        absorbed = true;
+        // The FULL weight, not weight * sticking. What a surface receives is
+        // what arrives at it; whether it sticks is the rate law's business,
+        // and it applies the sticking itself. Depositing the absorbed part
+        // here instead would apply it twice. The sticking still governs how
+        // much of the ray survives to carry on.
+        deposit(collected, hit.index, weight);
+        weight *= (T(1) - sticking);
+        if (weight <= rayRate * weightCutoff)
+          break;
+
+        // Re-emit about the local normal, from just outside the cell so the
+        // walk does not immediately re-enter the cell it left.
+        Vec3D<T> normal3{0, 0, 0};
+        for (int d = 0; d < D; ++d)
+          normal3[d] = hit.normal[d];
+        const auto newDir =
+            viennaray::ReflectionDiffuse<T, D>(normal3, rng);
+        for (int d = 0; d < D; ++d) {
+          origin[d] = hit.point[d] + normal3[d] * delta * T(1e-3);
+          direction[d] = newDir[d];
+        }
+        ++result.reemissions;
+      }
+      if (absorbed)
+        ++result.raysAbsorbed;
+    }
+
+    // Rates become flux densities by dividing out the area each cell shows.
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+    std::array<int, D> idx{};
+    for (size_t flat = 0; flat < sites; ++flat) {
+      size_t rem = flat;
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id < 0 || collected[id] == T(0))
+        continue;
+      // Same guard as the chemistry applies: a sliver of interface would
+      // divide a small rate by a smaller area and report an impossible flux.
+      T faceArea = 1;
+      for (int d = 0; d < D - 1; ++d)
+        faceArea *= delta;
+      const T area = areas_.interfaceArea(*fill_, idx);
+      if (area > T(1e-2) * faceArea)
+        result.flux[id] = collected[id] / area;
+    }
+    return result;
+  }
+};
+
+} // namespace viennacs
