@@ -6,6 +6,7 @@
 #include <omp.h>
 #endif
 
+#include <algorithm>
 #include <utility>
 
 namespace viennacs {
@@ -599,6 +600,82 @@ public:
       }
       if (!moved)
         break;
+    }
+
+    // SUPPORT. The anchoring sweeps above are local, and two local
+    // conventions can conspire to keep matter floating: a flat cluster of
+    // equal fills anchors itself pairwise, and a cell on the lattice
+    // boundary anchors itself through the field-continuation rule -- which
+    // is right for a solid cut by the domain edge and wrong as a source of
+    // support in gas. Support is therefore decided globally: matter is
+    // supported only if it is face-connected, through cells holding
+    // material of a compatible solid, to a FULL cell. The boundary
+    // continues the field; it does not support it. Whatever is unsupported
+    // is merged into a supported neighbour where one exists, and otherwise
+    // removed and counted.
+    {
+      std::vector<unsigned char> supported(fill.size(), 0);
+      std::vector<size_t> stack;
+      for (size_t flat = 0; flat < sites; ++flat) {
+        unflatten(flat);
+        const int id = lattice_->cellId(idx);
+        if (id >= 0 && fill[id] >= T(1) - T(1e-12) && !supported[id]) {
+          supported[id] = 1;
+          stack.push_back(flat);
+        }
+      }
+      // A state with no full cell at all -- an all-partial thin film is a
+      // legal input -- has nothing to flood from, and treating everything
+      // as unsupported would erase the geometry. Connectivity is
+      // undecidable without an anchor; leave such a state alone.
+      const bool haveSeeds = !stack.empty();
+      while (!stack.empty()) {
+        const size_t flat = stack.back();
+        stack.pop_back();
+        unflatten(flat);
+        const int id = lattice_->cellId(idx);
+        for (int d = 0; d < D; ++d)
+          for (int sgn = -1; sgn <= 1; sgn += 2) {
+            auto nb = idx;
+            nb[d] += sgn;
+            const int nid = lattice_->cellId(nb);
+            if (nid < 0 || supported[nid] || fill[nid] <= T(1e-12))
+              continue;
+            if (!sameSolid(id, nid))
+              continue;
+            supported[nid] = 1;
+            stack.push_back(flatten(nb));
+          }
+      }
+      for (size_t flat = 0; haveSeeds && flat < sites; ++flat) {
+        unflatten(flat);
+        const int id = lattice_->cellId(idx);
+        if (id < 0 || supported[id] || fill[id] <= T(1e-12))
+          continue;
+        // Unsupported: pour it into the supported neighbours, fullest
+        // first, until it is placed or they are full. Only what no
+        // neighbour can hold is lost -- and counted.
+        std::array<int, 2 * D> nbrs;
+        int nNbrs = 0;
+        for (int d = 0; d < D; ++d)
+          for (int sgn = -1; sgn <= 1; sgn += 2) {
+            auto nb = idx;
+            nb[d] += sgn;
+            const int nid = lattice_->cellId(nb);
+            if (nid >= 0 && supported[nid] && sameSolid(id, nid))
+              nbrs[nNbrs++] = nid;
+          }
+        std::sort(nbrs.begin(), nbrs.begin() + nNbrs,
+                  [&](int a, int b) { return fill[a] > fill[b]; });
+        T remaining = fill[id];
+        for (int n = 0; n < nNbrs && remaining > T(0); ++n) {
+          const T moved = std::min(T(1) - fill[nbrs[n]], remaining);
+          fill[nbrs[n]] += moved;
+          remaining -= moved;
+        }
+        step.volumeLost += remaining * cellVolume;
+        fill[id] = T(0);
+      }
     }
 
     // Nothing may be left out of range. If it is, the surplus had nowhere to
