@@ -162,9 +162,30 @@ public:
 
   /// Walks the ray until a cell interacts. `rng` is consumed once per
   /// partially filled cell crossed.
+  /// `armAfter` suppresses interaction until the ray has travelled that far
+  /// from its origin. It is the voxel analogue of embree's tnear, which is what
+  /// keeps the level-set arm's ray from re-hitting the primitive it just left.
+  ///
+  /// A DISTANCE, deliberately, and not a geometric condition. A fractional
+  /// interface is two or three cells thick, so a ray re-emitted from inside it
+  /// would otherwise interact again immediately and, where the sticking is
+  /// small, deposit its full weight over and over. Two attempts to prevent that
+  /// were worse:
+  ///
+  ///   - displacing the origin along the normal pushed the ray one to three
+  ///     cells off the surface at every bounce, which in a trench is several
+  ///     percent of the width each time and lifts rays out of the feature;
+  ///   - waiting for a cell holding no material stranded grazing rays, which
+  ///     hug the interface, never meet an empty cell, and are lost.
+  ///
+  /// A distance gate does neither: the ray stays where it was emitted, and it
+  /// is free to strike anything beyond one interface thickness -- including the
+  /// same wall further along, which is a different patch of surface and should
+  /// be hit.
   template <class RNG>
   VoxelHit<T, D> firstHit(const std::array<T, D> &origin,
-                          const std::array<T, D> &direction, RNG &rng) const {
+                          const std::array<T, D> &direction, RNG &rng,
+                          T armAfter = T(0)) const {
     const T delta = lattice_->gridDelta();
     std::uniform_real_distribution<T> uniform(T(0), T(1));
 
@@ -173,6 +194,11 @@ public:
     bool havePrevious = false;
 
     traversal_.traverse(origin, direction, [&](GridStep<T, D> step) {
+      if (step.tExit <= armAfter) {
+        previous = step.index;
+        havePrevious = true;
+        return true; // still within the interface it was emitted from
+      }
       const T f = fillAt(step.index);
       if (f > T(0)) {
         // A partially filled cell transmits; a full one always interacts.

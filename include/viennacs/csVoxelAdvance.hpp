@@ -154,7 +154,31 @@ public:
 
   /// Advances the surface by `dt`. `velocity` is indexed by cell id, positive
   /// for growth. Cells with no interface contribute nothing.
-  Step apply(std::vector<T> &fill, const std::vector<T> &velocity, T dt) const {
+  /// `solid`, when given, makes the advance respect material boundaries:
+  /// matter may not be moved between cells of DIFFERENT solids. Without it,
+  /// fill is one substance, and at a two-material corner one material's
+  /// over-etched deficit walks into the other and drains it -- a masked etch
+  /// ate its mask foot at a thousand times the mask's own sputter rate, cell
+  /// by cell, through exactly this. Cells labelled `wildcard` (gas: matter
+  /// below the labelling threshold) match anything. Blocked dose is counted
+  /// in volumeLost, never vanished.
+  /// `velMat`, when given, names PER CELL the material the velocity was
+  /// computed for. A gas skin cell at a two-material corner legitimately
+  /// carries the floor's silicon etch -- but its inward placement walk can
+  /// point laterally into the mask, and a wildcard-only guard lets the
+  /// silicon-computed share drain mask matter. The sharper rule: a share may
+  /// only land in the material it was computed for; a mismatch drops the
+  /// share from volumeRequested, reported, never quietly delivered.
+  Step apply(std::vector<T> &fill, const std::vector<T> &velocity, T dt,
+             const std::vector<int> *solid = nullptr,
+             int wildcard = -1,
+             const std::vector<int> *velMat = nullptr) const {
+    auto sameSolid = [&](int a, int b) {
+      if (!solid)
+        return true;
+      const int ma = (*solid)[a], mb = (*solid)[b];
+      return ma == mb || ma == wildcard || mb == wildcard;
+    };
     const T delta = lattice_->gridDelta();
     const auto &dims = lattice_->dims();
     T cellVolume = 1;
@@ -205,6 +229,17 @@ public:
       const T volume = velocity[id] * area * dt;
       step.volumeRequested += volume;
 
+      // Placement is symmetric about the front, and the symmetry is not
+      // cosmetic. A share computed at an EMPTY cell (deposition reaching ahead
+      // of the front) walks inward to a cell holding material; a share
+      // computed at a FULL cell (etching reaching behind the front) walks
+      // outward to the partial front cell. Only the first half of this
+      // existed at first, so deposition stayed one cell sharp while an etch
+      // eroded the cell UNDER its front, widened the interface every step --
+      // 560 surface cells became 1144 over twenty -- and the measured motion
+      // decayed toward zero while the assigned velocities stayed correct. An
+      // interface must be drained from its front for the same reason it must
+      // be grown there.
       int target = id;
       if (fill[id] <= T(0)) {
         // Empty, and ahead of the front: walk back along the normal until a
@@ -226,13 +261,46 @@ public:
             const int nid = lattice_->cellId(probe);
             if (nid < 0)
               break;
-            if (fill[nid] > T(0))
+            const bool matches =
+                velMat ? ((*velMat)[id] == wildcard ||
+                          (*solid)[nid] == wildcard ||
+                          (*velMat)[id] == (*solid)[nid])
+                       : sameSolid(id, nid);
+            if (fill[nid] > T(0) && matches)
               target = nid;
           }
         }
         if (target < 0) {
           step.volumeRequested -= volume; // nowhere to put it: do not claim it
           continue;
+        }
+      } else if (fill[id] >= T(1)) {
+        // Full, behind the front: hand the share to the partial front cell,
+        // outward along the normal. If the interface is perfectly sharp there
+        // is no partial cell and this cell IS the front: keep it.
+        const auto g = fillGradient(fill, idx);
+        int axis = 0;
+        T best = 0;
+        for (int d = 0; d < D; ++d)
+          if (std::abs(g[d]) > best) {
+            best = std::abs(g[d]);
+            axis = d;
+          }
+        if (best > T(1e-12)) {
+          const int outward = g[axis] > 0 ? 1 : -1;
+          auto probe = idx;
+          for (int stepOut = 0; stepOut < 3; ++stepOut) {
+            probe[axis] += outward;
+            const int nid = lattice_->cellId(probe);
+            if (nid < 0 || fill[nid] <= T(0))
+              break; // sharp interface: this cell is the front
+            if (!sameSolid(id, nid))
+              break; // a material boundary is a wall, not a conduit
+            if (fill[nid] < T(1)) {
+              target = nid;
+              break;
+            }
+          }
         }
       }
       change[target] += volume / cellVolume;
@@ -311,7 +379,7 @@ public:
         auto neighbour = idx;
         neighbour[axis] += direction;
         const int nid = lattice_->cellId(neighbour);
-        if (nid < 0) {
+        if (nid < 0 || !sameSolid(id, nid)) {
           step.volumeLost += surplus * cellVolume;
           fill[id] = overflowing ? T(1) : T(0);
           moved = true;
@@ -320,6 +388,59 @@ public:
         fill[id] = overflowing ? T(1) : T(0);
         fill[nid] += surplus;
         moved = true;
+      }
+      if (!moved)
+        break;
+    }
+
+    // No partial cell may be fuller than every one of its neighbours. A cell
+    // that is has come loose from the front: nothing anchors it, and it is
+    // the droplet debris transport noise leaves a cell or two off the
+    // surface. A sound interface is monotone -- each partial cell has a
+    // neighbour at least as full, chaining back to a full cell -- so a
+    // detached cell's content is merged into its fullest neighbour, toward
+    // the front, and only matter with NOTHING around it is removed, counted
+    // in volumeLost rather than vanished.
+    for (int sweep = 0; sweep < 4; ++sweep) {
+      bool moved = false;
+      for (size_t flat = 0; flat < sites; ++flat) {
+        unflatten(flat);
+        const int id = lattice_->cellId(idx);
+        if (id < 0)
+          continue;
+        const T f = fill[id];
+        if (f <= T(1e-12) || f >= T(1) - T(1e-12))
+          continue;
+        T maxNbr = -1;
+        int best = -1;
+        for (int d = 0; d < D; ++d)
+          for (int sgn = -1; sgn <= 1; sgn += 2) {
+            auto nb = idx;
+            nb[d] += sgn;
+            const int nid = lattice_->cellId(nb);
+            if (nid < 0) { // the boundary continues the field: anchored
+              maxNbr = std::max(maxNbr, f);
+              continue;
+            }
+            if (fill[nid] > maxNbr && sameSolid(id, nid)) {
+              maxNbr = fill[nid];
+              best = nid;
+            }
+          }
+        if (f <= maxNbr + T(1e-12))
+          continue; // anchored
+        moved = true;
+        if (maxNbr <= T(0) || best < 0) {
+          step.volumeLost += f * cellVolume; // isolated debris, reported
+          fill[id] = T(0);
+          continue;
+        }
+        fill[best] += f;
+        if (fill[best] > T(1)) {
+          fill[id] = fill[best] - T(1); // remainder stays, now anchored
+          fill[best] = T(1);
+        } else
+          fill[id] = T(0);
       }
       if (!moved)
         break;

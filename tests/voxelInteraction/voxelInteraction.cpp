@@ -238,6 +238,105 @@ void checkNormalAgainstTilt() {
             " deg");
 }
 
+/// The angle chain in THREE dimensions, where it is new geometry rather than
+/// a template parameter: the Youngs stencil gains an azimuthal dimension the
+/// 2D test cannot exercise, and the face normal quantises to six directions.
+/// Checked on tilted planes, over tilt AND azimuth, for the two quantities the
+/// ion physics consumes: the incidence angle (the yield's f(theta)) and the
+/// specular direction (where the reflection cone points). Face normals are
+/// asserted BAD -- their specular error is twice the tilt, which is what
+/// disqualifies them for ion work -- and Youngs is asserted uniform in
+/// azimuth, which a separable stencil has no a-priori right to be.
+void checkAngleChain3D() {
+  constexpr int D3 = 3;
+  using V3 = viennacore::Vec3D<T>;
+  const T gridDelta = 1.0, lo = -14., hi = 14.;
+  ls::BoundaryConditionEnum bc[D3] = {
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY,
+      ls::BoundaryConditionEnum::INFINITE_BOUNDARY};
+  T bounds[2 * D3];
+  for (int i = 0; i < D3; ++i) {
+    bounds[2 * i] = lo;
+    bounds[2 * i + 1] = hi;
+  }
+  T o[D3] = {0, 0, hi}, n[D3] = {0, 0, 1};
+  auto pl = ls::SmartPointer<ls::Domain<T, D3>>::New(bounds, bc, gridDelta);
+  ls::MakeGeometry<T, D3>(pl,
+                          ls::SmartPointer<ls::Plane<T, D3>>::New(o, n))
+      .apply();
+  std::vector<ls::SmartPointer<ls::Domain<T, D3>>> lss{pl};
+  cs::DenseCellSet<T, D3> cellSet;
+  cellSet.setCellSetPosition(false);
+  cellSet.setCoverMaterial(0);
+  cellSet.fromLevelSets(lss, nullptr, lo);
+  cs::LatticeMap<T, D3> lattice(cellSet);
+
+  auto angleBetween = [](const V3 &a, const V3 &b) {
+    T dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    return std::acos(std::min(T(1), std::max(T(-1), dot))) * 180. / M_PI;
+  };
+
+  T worstYoungsNormal = 0, worstYoungsIncidence = 0, bestFaceIncidence = 1e9;
+  T youngsLo = 1e9, youngsHi = 0; // azimuthal spread at one tilt
+  for (const T tilt : {15., 30., 60.}) {
+    for (const T azim : {0., 22.5, 45.}) {
+      const T th = tilt * M_PI / 180., ph = azim * M_PI / 180.;
+      const V3 nTrue{std::sin(th) * std::cos(ph),
+                     std::sin(th) * std::sin(ph), std::cos(th)};
+      std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
+      cs::fillFromSignedDistance<T, D3>(
+          lattice, fill, [&](const V3 &p) {
+            return p[0] * nTrue[0] + p[1] * nTrue[1] + p[2] * nTrue[2];
+          });
+      for (const auto est :
+           {cs::NormalEstimator::Face, cs::NormalEstimator::FillGradientYoungs}) {
+        cs::VoxelInteraction<T, D3> interaction(lattice, fill, est);
+        std::mt19937 rng(5);
+        std::uniform_real_distribution<T> u(-7., 7.);
+        T nerr = 0, ierr = 0;
+        int cnt = 0;
+        for (int r = 0; r < 2000; ++r) {
+          std::array<T, D3> org{u(rng), u(rng), T(13)}, dir{0, 0, -1};
+          const auto hit = interaction.firstHit(org, dir, rng);
+          if (!hit.hit())
+            continue;
+          nerr += angleBetween(hit.normal, nTrue);
+          const T measured =
+              std::acos(std::min(T(1), std::max(T(0), hit.normal[2]))) * 180. /
+              M_PI; // vertical ray: incidence = angle of the normal
+          ierr += std::abs(measured - tilt);
+          ++cnt;
+        }
+        nerr /= cnt;
+        ierr /= cnt;
+        if (est == cs::NormalEstimator::FillGradientYoungs) {
+          worstYoungsNormal = std::max(worstYoungsNormal, nerr);
+          worstYoungsIncidence = std::max(worstYoungsIncidence, ierr);
+          if (tilt == 30.) {
+            youngsLo = std::min(youngsLo, nerr);
+            youngsHi = std::max(youngsHi, nerr);
+          }
+        } else {
+          bestFaceIncidence = std::min(bestFaceIncidence, ierr);
+        }
+      }
+    }
+  }
+  check("3D: Youngs' normal holds on tilted planes at every azimuth",
+        worstYoungsNormal < 4.0,
+        "worst mean error " + std::to_string(worstYoungsNormal) + " deg");
+  check("3D: the incidence angle the yield consumes is right to a few degrees",
+        worstYoungsIncidence < 4.0,
+        "worst " + std::to_string(worstYoungsIncidence) + " deg");
+  check("3D: Youngs is azimuthally uniform, which a separable stencil must earn",
+        youngsHi - youngsLo < 2.0,
+        "spread " + std::to_string(youngsHi - youngsLo) + " deg at 30 deg tilt");
+  check("3D: the face normal misreads incidence by the tilt itself",
+        bestFaceIncidence > 10.0,
+        "best " + std::to_string(bestFaceIncidence) + " deg");
+}
+
 int main() {
   std::cout << "Voxel interaction: what filling fractions recover\n\n";
 
@@ -250,6 +349,9 @@ int main() {
 
   std::cout << "\n2) the normal, against surface tilt\n";
   checkNormalAgainstTilt();
+
+  std::cout << "\n3) the angle chain in three dimensions\n";
+  checkAngleChain3D();
 
   std::cout << "\n";
   if (failures) {

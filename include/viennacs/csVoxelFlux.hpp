@@ -2,8 +2,11 @@
 
 #include "csVoxelAdvance.hpp"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <rayReflection.hpp>
-#include <raySourceRandom.hpp>
 #include <rayUtil.hpp>
 
 namespace viennacs {
@@ -114,13 +117,15 @@ public:
   /// borrowed here.
   template <class RNG>
   VoxelHit<T, D> traceToSurface(std::array<T, D> origin,
-                                std::array<T, D> direction, RNG &rng) const {
+                                std::array<T, D> direction, RNG &rng,
+                                T armAfter = T(0)) const {
     const T delta = lattice_->gridDelta();
     const auto &dims = lattice_->dims();
     const auto &minCorner = lattice_->minCorner();
 
     for (int crossing = 0; crossing < 64; ++crossing) {
-      const auto hit = interaction_.firstHit(origin, direction, rng);
+      const auto hit =
+          interaction_.firstHit(origin, direction, rng, armAfter);
       if (hit.hit())
         return hit;
 
@@ -181,43 +186,105 @@ public:
   Result trace(size_t numRays, T sourceFlux, T sticking,
                T cosinePower = T(1), unsigned seed = 1,
                T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
+    return trace(numRays, sourceFlux, std::vector<T>(fill_->size(), sticking),
+                 cosinePower, seed, weightCutoff, smoothingNeighbors);
+  }
+
+  /// The same, with the sticking resolved PER CELL.
+  ///
+  /// A selective mechanism adsorbs differently on different materials, and the
+  /// re-emission has to follow: a species that sticks on the substrate and
+  /// reflects off the mask reaches deep into a feature, and one that sticks
+  /// everywhere does not. A single value for the whole surface gets transport
+  /// inside a feature wrong even where the surface solve is right, and a
+  /// blanket of one material cannot show it.
+  Result trace(size_t numRays, T sourceFlux, const std::vector<T> &sticking,
+               T cosinePower = T(1), unsigned seed = 1,
+               T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
     const auto &dims = lattice_->dims();
     const auto &minCorner = lattice_->minCorner();
     const T delta = lattice_->gridDelta();
 
     // The source spans the top of the lattice, looking down.
-    std::array<Vec3D<T>, 2> boundingBox;
-    for (int d = 0; d < 3; ++d) {
-      boundingBox[0][d] = 0;
-      boundingBox[1][d] = 0;
-    }
+    //
+    // Sampled here rather than through ViennaRay's SourceRandom, whose
+    // interface differs between ViennaRay generations: one offers
+    // getOriginAndDirection, another getOrigin and getDirection separately,
+    // and a header compiling against one fails against the other. The law is
+    // ViennaRay's own and unchanged -- a position uniform over the top face,
+    // and cos(theta) drawn as r^(1/(power+1)) about the inward axis -- so both
+    // arms still sample the same distribution. Only the coupling to an
+    // interface that moves is gone.
+    std::array<T, D> sourceMin{}, sourceMax{};
     for (int d = 0; d < D; ++d) {
-      boundingBox[0][d] = minCorner[d];
-      boundingBox[1][d] = minCorner[d] + delta * static_cast<T>(dims[d]);
+      sourceMin[d] = minCorner[d];
+      sourceMax[d] = minCorner[d] + delta * static_cast<T>(dims[d]);
     }
-    const auto settings = rayInternal::getTraceSettings(
-        D == 2 ? viennaray::TraceDirection::POS_Y
-               : viennaray::TraceDirection::POS_Z);
-    std::array<Vec3D<T>, 3> basis{};
-    viennaray::SourceRandom<T, D> source(boundingBox, cosinePower, settings,
-                                         numRays, false, basis);
+    T sourceArea = 1;
+    for (int d = 0; d < D - 1; ++d)
+      sourceArea *= (sourceMax[d] - sourceMin[d]);
+    const T exponent = T(1) / (cosinePower + T(1));
 
     Result result;
     result.flux.assign(fill_->size(), T(0));
     result.raysTraced = numRays;
 
-    const T rayRate = sourceFlux * source.getSourceArea() /
-                      static_cast<T>(numRays);
+    const T rayRate = sourceFlux * sourceArea / static_cast<T>(numRays);
 
-    RNG rng(seed);
     std::vector<T> collected(fill_->size(), T(0));
 
-    for (size_t r = 0; r < numRays; ++r) {
-      auto [origin3, direction3] = source.getOriginAndDirection(r, rng);
+    // Rays are independent, so they are traced in parallel -- as ViennaRay
+    // traces the level-set arm's. Left serial, the voxel arm is not merely
+    // slow, it is being compared against a parallel implementation, and any
+    // statement about cost means nothing.
+    //
+    // Each thread accumulates into its own buffer and they are summed at the
+    // end: contention on a shared buffer would cost more than the tracing.
+    // Each also carries its own stream, so the result does not depend on how
+    // many threads ran, only on the seed.
+#pragma omp parallel
+    {
+      std::vector<T> mine(fill_->size(), T(0));
+      const unsigned thread =
+#ifdef _OPENMP
+          static_cast<unsigned>(omp_get_thread_num());
+#else
+          0u;
+#endif
+      RNG rng(seed * 7919u + thread);
+
+#pragma omp for schedule(static)
+      for (long long r = 0; r < static_cast<long long>(numRays); ++r) {
+      std::uniform_real_distribution<T> uni(T(0), T(1));
       std::array<T, D> origin{}, direction{};
-      for (int d = 0; d < D; ++d) {
-        origin[d] = origin3[d];
-        direction[d] = direction3[d];
+      for (int d = 0; d < D - 1; ++d)
+        origin[d] = sourceMin[d] + (sourceMax[d] - sourceMin[d]) * uni(rng);
+      origin[D - 1] = sourceMax[D - 1];
+
+      // Sample the direction in THREE dimensions and, in 2D, project it onto
+      // the plane. That is what ViennaRay does, and it is not a detail: the
+      // polar angle of the 3D cosine law is not the angle of the 2D one.
+      //
+      // Applying cos(theta) = u^(1/(n+1)) directly as a 2D angle gives a
+      // cumulative of sin^2(theta) where 2D requires sin(theta) -- far too
+      // collimated about the vertical. Down a trench of aspect ratio 1.5 that
+      // put only sin^2(18.4 deg) = 0.10 of the field flux on the floor against
+      // the 0.32 the geometry allows, so the floor received a third of what
+      // line of sight alone would deliver. Projecting a 3D sample recovers the
+      // 2D law exactly, for any cosine power, without a special case.
+      const T cosTheta = std::pow(uni(rng), exponent);
+      const T sinTheta = std::sqrt(std::max(T(0), T(1) - cosTheta * cosTheta));
+      const T phi = T(2) * T(M_PI) * uni(rng);
+      if constexpr (D == 2) {
+        const T dx = std::cos(phi) * sinTheta;
+        const T dy = -cosTheta;
+        const T norm = std::sqrt(dx * dx + dy * dy);
+        direction[0] = dx / norm;
+        direction[1] = dy / norm;
+      } else {
+        direction[0] = std::cos(phi) * sinTheta;
+        direction[1] = std::sin(phi) * sinTheta;
+        direction[2] = -cosTheta;
       }
 
       T weight = rayRate;
@@ -232,8 +299,8 @@ public:
         // and it applies the sticking itself. Depositing the absorbed part
         // here instead would apply it twice. The sticking still governs how
         // much of the ray survives to carry on.
-        deposit(collected, hit.index, weight);
-        weight *= (T(1) - sticking);
+        deposit(mine, hit.index, weight);
+        weight *= (T(1) - sticking[hit.cellId]);
         if (weight <= rayRate * weightCutoff)
           break;
 
@@ -254,6 +321,11 @@ public:
           normal3[d] = hit.normal[d];
         const auto newDir = viennaray::ReflectionDiffuse<T, D>(normal3, rng);
 
+        // Restart just outside the interface it was emitted from. Three
+        // schemes were measured -- this, a gate on reaching an empty cell, and
+        // a distance epsilon -- and all three land within a few percent of one
+        // another, so the restart is NOT what separates this arm from the
+        // level-set one. This one is kept because it costs the blanket least.
         int axis = 0;
         T steepest = 0;
         for (int d = 0; d < D; ++d)
@@ -276,10 +348,15 @@ public:
                       normal3[d] * delta * (static_cast<T>(clear) + T(1e-3));
           direction[d] = newDir[d];
         }
-        ++result.reemissions;
       }
       if (absorbed)
+#pragma omp atomic
         ++result.raysAbsorbed;
+      }
+
+#pragma omp critical
+      for (size_t c = 0; c < mine.size(); ++c)
+        collected[c] += mine[c];
     }
 
     // Rates become flux densities by dividing out the area each cell shows.
