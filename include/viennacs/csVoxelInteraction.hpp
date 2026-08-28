@@ -1,10 +1,12 @@
 #pragma once
 
+#include "csVoxelEmbreeTraversal.hpp"
 #include "csVoxelSurface.hpp"
 
 #include <vcRNG.hpp>
 
 #include <cmath>
+#include <memory>
 
 namespace viennacs {
 
@@ -57,6 +59,22 @@ using namespace viennacore;
 /// answered only part of the question, so all three are here and switchable.
 enum class NormalEstimator { Face, FillGradient, FillGradientYoungs };
 
+/// How a ray finds the cell it interacts with. The physics -- the acceptance
+/// probability, the normal, the arming distance -- is identical either way;
+/// what differs is the cost of the question "which cells does this ray cross".
+///
+///   GridDDA     Amanatides-Woo cell walking. O(cells crossed) per ray, which
+///               is O(depth of gas) -- the reference implementation.
+///   EmbreeBVH   the cells as embree user primitives, one BVH descent per
+///               ray segment -- the same acceleration library the level-set
+///               arm traces against.
+///   Hybrid      each engine where it is strong. A primary ray flies the
+///               whole gas column, which is the BVH's regime; a re-emitted
+///               segment usually lands a few cells away, and marching three
+///               cells beats any tree query. The two cases are told apart by
+///               the arming distance: only a re-emitted segment carries one.
+enum class TraversalEngine { GridDDA, EmbreeBVH, Hybrid };
+
 template <class T, int D> struct VoxelHit {
   int cellId = -1;
   std::array<int, D> index{};
@@ -75,6 +93,19 @@ template <class T, int D> class VoxelInteraction {
   const std::vector<T> *fill_ = nullptr;
   GridTraversal<T, D> traversal_;
   NormalEstimator estimator_ = NormalEstimator::Face;
+  TraversalEngine engine_ = TraversalEngine::GridDDA;
+  // A cache of the geometry, not part of the object's value: shared so a
+  // copied interaction keeps tracing against the same built scene, mutable so
+  // `prepare` can rebuild it on a const object.
+  mutable std::shared_ptr<EmbreeCellTraversal<T, D>> bvh_;
+  // The gradient normal per cell, computed once per trace instead of once
+  // per hit: the fills are frozen while the rays fly, so the 3^D stencil a
+  // hit pays -- tens of millions of times per step -- always returns the
+  // same vector. `valid` is -1 where nothing is cached (fall through to the
+  // direct stencil), 0 where the gradient is degenerate (the hit's own face
+  // normal stands in, as gradientNormal itself falls back).
+  mutable std::vector<Vec3D<T>> normalCache_;
+  mutable std::vector<signed char> normalValid_;
 
 public:
   VoxelInteraction(const LatticeMap<T, D> &lattice, const std::vector<T> &fill,
@@ -82,8 +113,67 @@ public:
       : lattice_(&lattice), fill_(&fill), traversal_(lattice),
         estimator_(estimator) {}
 
-  void setNormalEstimator(NormalEstimator e) { estimator_ = e; }
+  void setNormalEstimator(NormalEstimator e) {
+    estimator_ = e;
+    normalValid_.clear(); // the cache belongs to one estimator
+    normalCache_.clear();
+  }
   NormalEstimator normalEstimator() const { return estimator_; }
+
+  void setTraversalEngine(TraversalEngine e) { engine_ = e; }
+  TraversalEngine traversalEngine() const { return engine_; }
+
+  /// Builds the BVH from the CURRENT fills. Must be called before a parallel
+  /// tracing region whenever the engine is EmbreeBVH -- the fills change every
+  /// step, and rays must never race a build.
+  void prepare() const {
+    if (engine_ != TraversalEngine::GridDDA) {
+      if (!bvh_)
+        bvh_ = std::make_shared<EmbreeCellTraversal<T, D>>();
+      bvh_->build(*lattice_, *fill_);
+    }
+    if (estimator_ == NormalEstimator::Face)
+      return; // the face normal is per-hit by nature; nothing to cache
+    const auto &dims = lattice_->dims();
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+    normalCache_.assign(fill_->size(), Vec3D<T>{0, 0, 0});
+    normalValid_.assign(fill_->size(), 0);
+    const bool wide = estimator_ == NormalEstimator::FillGradientYoungs;
+#pragma omp parallel for schedule(static)
+    for (long long flat = 0; flat < static_cast<long long>(sites); ++flat) {
+      std::array<int, D> idx{};
+      size_t rem = static_cast<size_t>(flat);
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id < 0 || (*fill_)[id] <= T(0))
+        continue; // only a cell holding material can be hit
+      // A zero sentinel face normal: gradientNormal returns it exactly when
+      // the gradient is degenerate, which is the case where the per-hit face
+      // normal must stand in.
+      const auto n = gradientNormal(idx, Vec3D<T>{0, 0, 0}, wide);
+      if (n[0] != T(0) || n[1] != T(0) || n[2] != T(0)) {
+        normalCache_[id] = n;
+        normalValid_[id] = 1;
+      }
+    }
+  }
+
+  /// The estimator's normal at a hit, from the per-trace cache when one is
+  /// built, by the direct stencil when not -- same values either way.
+  Vec3D<T> hitNormal(int id, const std::array<int, D> &idx,
+                     const Vec3D<T> &faceNormal) const {
+    if (estimator_ == NormalEstimator::Face)
+      return faceNormal;
+    if (normalValid_.size() == fill_->size())
+      return normalValid_[id] ? normalCache_[id] : faceNormal;
+    return gradientNormal(idx, faceNormal,
+                          estimator_ == NormalEstimator::FillGradientYoungs);
+  }
 
   /// The filling fraction at a lattice coordinate; zero where there is no
   /// cell, because a ray that leaves the grid must find nothing to hit.
@@ -186,6 +276,47 @@ public:
   VoxelHit<T, D> firstHit(const std::array<T, D> &origin,
                           const std::array<T, D> &direction, RNG &rng,
                           T armAfter = T(0)) const {
+    const bool useBVH =
+        bvh_ && bvh_->built() &&
+        (engine_ == TraversalEngine::EmbreeBVH ||
+         (engine_ == TraversalEngine::Hybrid && armAfter <= T(0)));
+    if (useBVH) {
+      // One seed per ray segment: it decides every acceptance on this
+      // segment idempotently, and a re-emitted segment draws a new one.
+      const std::uint64_t seed =
+          (static_cast<std::uint64_t>(rng()) << 32) ^
+          static_cast<std::uint64_t>(rng());
+      const auto raw = bvh_->firstHit(origin, direction, seed, armAfter);
+      VoxelHit<T, D> result;
+      if (!raw.hit())
+        return result;
+      result.cellId = raw.cellId;
+      result.index = raw.index;
+      result.distance = raw.tEntry;
+      for (int d = 0; d < D; ++d)
+        result.point[d] = origin[d] + direction[d] * raw.tEntry;
+      Vec3D<T> faceNormal{0, 0, 0};
+      if (raw.axis >= 0) {
+        result.enteredAxis = raw.axis;
+        result.enteredSign = raw.sign;
+      } else {
+        // The origin lay inside the cell: same fallback as the DDA's first
+        // cell -- the face of the axis the ray travels most steeply against.
+        int axis = 0;
+        T steepest = 0;
+        for (int d = 0; d < D; ++d)
+          if (std::abs(direction[d]) > steepest) {
+            steepest = std::abs(direction[d]);
+            axis = d;
+          }
+        result.enteredAxis = axis;
+        result.enteredSign = direction[axis] > 0 ? -1 : 1;
+      }
+      faceNormal[result.enteredAxis] = static_cast<T>(result.enteredSign);
+      result.normal = hitNormal(raw.cellId, raw.index, faceNormal);
+      return result;
+    }
+
     const T delta = lattice_->gridDelta();
     std::uniform_real_distribution<T> uniform(T(0), T(1));
 
@@ -238,12 +369,7 @@ public:
             faceNormal[axis] = static_cast<T>(result.enteredSign);
           }
 
-          result.normal =
-              estimator_ == NormalEstimator::Face
-                  ? faceNormal
-                  : gradientNormal(step.index, faceNormal,
-                                   estimator_ ==
-                                       NormalEstimator::FillGradientYoungs);
+          result.normal = hitNormal(result.cellId, step.index, faceNormal);
           return false; // stop: the ray has met the surface
         }
       }

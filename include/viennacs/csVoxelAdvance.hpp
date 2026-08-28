@@ -2,6 +2,12 @@
 
 #include "csVoxelInteraction.hpp"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include <utility>
+
 namespace viennacs {
 
 using namespace viennacore;
@@ -169,6 +175,80 @@ public:
   /// silicon-computed share drain mask matter. The sharper rule: a share may
   /// only land in the material it was computed for; a mismatch drops the
   /// share from volumeRequested, reported, never quietly delivered.
+  /// The cells this step can possibly act on, as a mask over cell ids.
+  ///
+  /// Marked: every cell whose filling differs from a face neighbour (a
+  /// lattice hole reads as empty, as fillAt reads it), dilated by TWO rings
+  /// of the full 3^D neighbourhood. That is a provable superset of every
+  /// cell any stencil here can see as interface: a non-uniform 3^D
+  /// neighbourhood contains a face-differing pair (the block is
+  /// face-connected), whose members the first pass marks, and one dilation
+  /// reaches the centre; the second ring covers the cells a step's placement
+  /// and spill can newly disturb. Everything OUTSIDE the mask is provably
+  /// inert -- zero gradient, zero area, nothing to anchor -- so sweeping
+  /// only the band changes no result, only the bill: the sweeps stop paying
+  /// for the lattice and start paying for the surface.
+  std::vector<unsigned char> interfaceBand(const std::vector<T> &fill) const {
+    const auto &dims = lattice_->dims();
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+
+    std::vector<unsigned char> band(fill.size(), 0);
+    std::vector<std::array<int, D>> ring;
+
+    std::array<int, D> idx{};
+    for (size_t flat = 0; flat < sites; ++flat) {
+      size_t rem = flat;
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id < 0)
+        continue;
+      const T f = fill[id];
+      bool differs = false;
+      for (int d = 0; d < D && !differs; ++d)
+        for (int sgn = -1; sgn <= 1 && !differs; sgn += 2) {
+          auto nb = idx;
+          nb[d] += sgn;
+          bool inside = nb[d] >= 0 && nb[d] < dims[d];
+          const int nid = inside ? lattice_->cellId(nb) : -1;
+          const T nf = nid < 0 ? (inside ? T(0) : f) : fill[nid];
+          if (nf != f)
+            differs = true;
+        }
+      if (differs && !band[id]) {
+        band[id] = 1;
+        ring.push_back(idx);
+      }
+    }
+
+    int span = 1;
+    for (int d = 0; d < D; ++d)
+      span *= 3;
+    for (int round = 0; round < 2; ++round) {
+      std::vector<std::array<int, D>> next;
+      for (const auto &c : ring)
+        for (int n = 0; n < span; ++n) {
+          auto nb = c;
+          int rem = n;
+          for (int d = 0; d < D; ++d) {
+            nb[d] += rem % 3 - 1;
+            rem /= 3;
+          }
+          const int nid = lattice_->cellId(nb);
+          if (nid >= 0 && !band[nid]) {
+            band[nid] = 1;
+            next.push_back(nb);
+          }
+        }
+      ring = std::move(next);
+    }
+    return band;
+  }
+
   Step apply(std::vector<T> &fill, const std::vector<T> &velocity, T dt,
              const std::vector<int> *solid = nullptr,
              int wildcard = -1,
@@ -191,6 +271,7 @@ public:
 
     Step step;
     std::vector<T> change(fill.size(), T(0));
+    const auto band = interfaceBand(fill);
 
     std::array<int, D> idx{};
     auto unflatten = [&](size_t flat) {
@@ -199,6 +280,12 @@ public:
         idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
         rem /= static_cast<size_t>(dims[d]);
       }
+    };
+    auto flatten = [&](const std::array<int, D> &q) {
+      size_t flat = 0;
+      for (int d = D - 1; d >= 0; --d)
+        flat = flat * static_cast<size_t>(dims[d]) + static_cast<size_t>(q[d]);
+      return flat;
     };
 
     // WHERE the volume is computed and WHERE it is placed are separate
@@ -218,16 +305,49 @@ public:
     // back along the normal; the front reaches it when the cell behind fills
     // up and spills, which is what the redistribution below is for. The
     // interface then stays one cell wide however far it travels.
-    for (size_t flat = 0; flat < sites; ++flat) {
-      unflatten(flat);
-      const int id = lattice_->cellId(idx);
-      if (id < 0)
-        continue;
-      const T area = interfaceArea(fill, idx);
-      if (area <= T(0))
-        continue;
-      const T volume = velocity[id] * area * dt;
-      step.volumeRequested += volume;
+    // PARALLEL, with a deterministic reduction. Each thread walks one
+    // contiguous block of sites (schedule(static) assigns blocks in thread
+    // order) and records its placements and requested volume locally; the
+    // blocks are merged in thread order afterwards. Contributions to any one
+    // target cell therefore arrive in ascending site order -- the serial
+    // order -- so the FILLS are bit-identical to the serial loop for any
+    // thread count. Only the requested-volume scalar is summed in a different
+    // grouping, which can differ in the last ulp; it is a diagnostic.
+#ifdef _OPENMP
+    const int numThreads = omp_get_max_threads();
+#else
+    const int numThreads = 1;
+#endif
+    std::vector<std::vector<std::pair<int, T>>> placedPer(numThreads);
+    std::vector<T> requestedPer(numThreads, T(0));
+#pragma omp parallel
+    {
+#ifdef _OPENMP
+      const int tid = omp_get_thread_num();
+#else
+      const int tid = 0;
+#endif
+      auto &placed = placedPer[tid];
+      T &requested = requestedPer[tid];
+      std::array<int, D> idx{}; // shadows the shared scratch, deliberately
+#pragma omp for schedule(static)
+      for (long long sflat = 0; sflat < static_cast<long long>(sites);
+           ++sflat) {
+        size_t rem = static_cast<size_t>(sflat);
+        for (int d = 0; d < D; ++d) {
+          idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+          rem /= static_cast<size_t>(dims[d]);
+        }
+        const int id = lattice_->cellId(idx);
+        if (id < 0)
+          continue;
+        if (velocity[id] == T(0))
+          continue; // a zero velocity moves no volume wherever it would land
+        const T area = interfaceArea(fill, idx);
+        if (area <= T(0))
+          continue;
+        const T volume = velocity[id] * area * dt;
+        requested += volume;
 
       // Placement is symmetric about the front, and the symmetry is not
       // cosmetic. A share computed at an EMPTY cell (deposition reaching ahead
@@ -271,7 +391,7 @@ public:
           }
         }
         if (target < 0) {
-          step.volumeRequested -= volume; // nowhere to put it: do not claim it
+          requested -= volume; // nowhere to put it: do not claim it
           continue;
         }
       } else if (fill[id] >= T(1)) {
@@ -303,7 +423,13 @@ public:
           }
         }
       }
-      change[target] += volume / cellVolume;
+        placed.emplace_back(target, volume / cellVolume);
+      }
+    }
+    for (int t = 0; t < numThreads; ++t) {
+      for (const auto &[cid, amount] : placedPer[t])
+        change[cid] += amount;
+      step.volumeRequested += requestedPer[t];
     }
 
     // The direction surplus travels must be read from the surface BEFORE it
@@ -315,12 +441,21 @@ public:
     // thirteen cells of material while every fraction was a legal one.
     std::vector<int> pushAxis(fill.size(), -1);
     std::vector<int> pushDir(fill.size(), 0);
-    for (size_t flat = 0; flat < sites; ++flat) {
-      unflatten(flat);
-      const int id = lattice_->cellId(idx);
+    // Independent per-cell writes: safe to parallelise, and deterministic.
+#pragma omp parallel for schedule(dynamic, 256)
+    for (long long pflat = 0; pflat < static_cast<long long>(sites); ++pflat) {
+      std::array<int, D> pidx{};
+      size_t rem = static_cast<size_t>(pflat);
+      for (int d = 0; d < D; ++d) {
+        pidx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(pidx);
       if (id < 0)
         continue;
-      const auto g = fillGradient(fill, idx);
+      if (!band[id])
+        continue; // outside the band the gradient is zero and -1 stands
+      const auto g = fillGradient(fill, pidx);
       int axis = 0;
       T best = 0;
       for (int d = 0; d < D; ++d)
@@ -334,8 +469,22 @@ public:
       }
     }
 
-    for (size_t i = 0; i < fill.size(); ++i)
-      fill[i] += change[i];
+    // Applying the change also names the only cells that can now be out of
+    // range: the redistribution below works through this list and what it
+    // spills into, instead of rescanning the lattice once per sweep.
+    std::vector<size_t> work;
+    std::vector<unsigned char> queued(fill.size(), 0);
+    for (size_t flat = 0; flat < sites; ++flat) {
+      unflatten(flat);
+      const int id = lattice_->cellId(idx);
+      if (id < 0)
+        continue;
+      if (change[id] == T(0))
+        continue;
+      fill[id] += change[id];
+      work.push_back(flat);
+      queued[id] = 1;
+    }
 
     // Redistribute what will not fit. A cell over one pushes the excess to the
     // neighbour the surface is advancing into; a cell under zero takes the
@@ -351,13 +500,13 @@ public:
     // measurement counts anyway. Silane reached 5.67 that way, and reported
     // twice the growth it had.
     const int maxSweeps = static_cast<int>(dims[0]) * 4;
-    for (int sweep = 0; sweep < maxSweeps; ++sweep) {
-      bool moved = false;
-      for (size_t flat = 0; flat < sites; ++flat) {
+    std::vector<size_t> next;
+    for (int sweep = 0; sweep < maxSweeps && !work.empty(); ++sweep) {
+      next.clear();
+      for (const size_t flat : work) {
         unflatten(flat);
         const int id = lattice_->cellId(idx);
-        if (id < 0)
-          continue;
+        queued[id] = 0;
         const T f = fill[id];
         if (f <= T(1) + T(1e-15) && f >= -T(1e-15))
           continue;
@@ -382,15 +531,16 @@ public:
         if (nid < 0 || !sameSolid(id, nid)) {
           step.volumeLost += surplus * cellVolume;
           fill[id] = overflowing ? T(1) : T(0);
-          moved = true;
           continue;
         }
         fill[id] = overflowing ? T(1) : T(0);
         fill[nid] += surplus;
-        moved = true;
+        if (!queued[nid]) { // it may overflow in turn: next sweep's problem
+          queued[nid] = 1;
+          next.push_back(flatten(neighbour));
+        }
       }
-      if (!moved)
-        break;
+      std::swap(work, next);
     }
 
     // No partial cell may be fuller than every one of its neighbours. A cell
@@ -407,6 +557,11 @@ public:
         unflatten(flat);
         const int id = lattice_->cellId(idx);
         if (id < 0)
+          continue;
+        // Everything a step writes lands inside the band, except a spill
+        // chain's last recipient -- which its now-full donor anchors, so it
+        // needs no visit either.
+        if (!band[id])
           continue;
         const T f = fill[id];
         if (f <= T(1e-12) || f >= T(1) - T(1e-12))

@@ -337,6 +337,121 @@ void checkAngleChain3D() {
         "best " + std::to_string(bestFaceIncidence) + " deg");
 }
 
+/// Claim four: the embree engine is the DDA by another traversal.
+///
+/// With binary fills no probability is ever rolled, so the two engines answer
+/// a deterministic question and must agree HIT FOR HIT -- cell, distance,
+/// entry face. With partial fills the acceptance is rolled from different
+/// random streams, so the demand is statistical: the same interaction rate
+/// and the same mean interaction depth.
+template <int D> void checkEngineAgreement(const std::string &label) {
+  const T gridDelta = 0.5;
+  auto cellSet = makeBlock<D>(gridDelta, -5., 5.);
+  cs::LatticeMap<T, D> lattice(cellSet);
+  std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
+
+  // A tilted plane, so entry faces of more than one axis appear.
+  const auto &dims = lattice.dims();
+  const auto &minC = lattice.minCorner();
+  auto paint = [&](bool binary) {
+    size_t total = 1;
+    for (int d = 0; d < D; ++d)
+      total *= static_cast<size_t>(dims[d]);
+    for (size_t s = 0; s < total; ++s) {
+      size_t rem = s;
+      std::array<int, D> ii{};
+      for (int d = 0; d < D; ++d) {
+        ii[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice.cellId(ii);
+      if (id < 0)
+        continue;
+      T height = T(0.35) * (minC[0] + gridDelta * (T(ii[0]) + T(0.5)));
+      T z = minC[D - 1] + gridDelta * (T(ii[D - 1]) + T(0.5));
+      const T signedDist = (height - z) / gridDelta; // >0 below the surface
+      if (binary)
+        fill[id] = signedDist > T(0) ? T(1) : T(0);
+      else
+        fill[id] = std::clamp(signedDist + T(0.5), T(0), T(1));
+    }
+  };
+
+  cs::VoxelInteraction<T, D> dda(lattice, fill);
+  cs::VoxelInteraction<T, D> bvh(lattice, fill);
+  bvh.setTraversalEngine(cs::TraversalEngine::EmbreeBVH);
+
+  std::mt19937 rng(11);
+  std::uniform_real_distribution<T> lateral(-4.5, 4.5), tilt(-0.6, 0.6);
+  auto randomRay = [&](std::array<T, D> &origin, std::array<T, D> &dir) {
+    for (int d = 0; d < D - 1; ++d) {
+      origin[d] = lateral(rng);
+      dir[d] = tilt(rng);
+    }
+    origin[D - 1] = 12.0;
+    dir[D - 1] = -1.0;
+    T n = 0;
+    for (int d = 0; d < D; ++d)
+      n += dir[d] * dir[d];
+    n = std::sqrt(n);
+    for (int d = 0; d < D; ++d)
+      dir[d] /= n;
+  };
+
+  // Binary: deterministic, so hit for hit.
+  paint(true);
+  bvh.prepare();
+  int mismatch = 0, compared = 0;
+  for (int r = 0; r < 2000; ++r) {
+    std::array<T, D> origin{}, dir{};
+    randomRay(origin, dir);
+    const auto a = dda.firstHit(origin, dir, rng);
+    const auto b = bvh.firstHit(origin, dir, rng);
+    if (!a.hit() && !b.hit())
+      continue;
+    ++compared;
+    const bool same = a.hit() && b.hit() && a.cellId == b.cellId &&
+                      std::abs(a.distance - b.distance) < T(1e-6) &&
+                      a.enteredAxis == b.enteredAxis &&
+                      a.enteredSign == b.enteredSign;
+    if (!same)
+      ++mismatch;
+  }
+  check(label + ": binary fills, engines agree hit for hit", mismatch == 0,
+        std::to_string(compared) + " rays, " + std::to_string(mismatch) +
+            " disagreed");
+
+  // Partial: the same distribution of interaction depths, statistically.
+  paint(false);
+  bvh.prepare(); // fills changed; the BVH must see the new set of cells
+  const int N = 40000;
+  T meanA = 0, meanB = 0;
+  int hitsA = 0, hitsB = 0;
+  for (int r = 0; r < N; ++r) {
+    std::array<T, D> origin{}, dir{};
+    randomRay(origin, dir);
+    const auto a = dda.firstHit(origin, dir, rng);
+    const auto b = bvh.firstHit(origin, dir, rng);
+    if (a.hit()) {
+      ++hitsA;
+      meanA += a.distance;
+    }
+    if (b.hit()) {
+      ++hitsB;
+      meanB += b.distance;
+    }
+  }
+  meanA /= static_cast<T>(hitsA);
+  meanB /= static_cast<T>(hitsB);
+  const T rate =
+      std::abs(hitsA - hitsB) / (T(0.5) * static_cast<T>(hitsA + hitsB));
+  check(label + ": partial fills, same interaction rate", rate < T(0.01),
+        std::to_string(hitsA) + " vs " + std::to_string(hitsB));
+  check(label + ": partial fills, same mean depth",
+        std::abs(meanA - meanB) < T(0.05) * gridDelta,
+        "mean " + std::to_string(meanA) + " vs " + std::to_string(meanB));
+}
+
 int main() {
   std::cout << "Voxel interaction: what filling fractions recover\n\n";
 
@@ -352,6 +467,10 @@ int main() {
 
   std::cout << "\n3) the angle chain in three dimensions\n";
   checkAngleChain3D();
+
+  std::cout << "\n4) the embree engine against the DDA\n";
+  checkEngineAgreement<2>("2D");
+  checkEngineAgreement<3>("3D");
 
   std::cout << "\n";
   if (failures) {

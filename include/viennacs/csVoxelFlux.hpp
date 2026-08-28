@@ -35,6 +35,7 @@ template <class T, int D> class VoxelFlux {
   const std::vector<T> *fill_ = nullptr;
   VoxelInteraction<T, D> interaction_;
   VoxelAdvance<T, D> areas_;
+  mutable std::vector<T> areaCache_; ///< per-trace, fills frozen while rays fly
   GridTraversal<T, D> traversal_;
 
 public:
@@ -44,6 +45,56 @@ public:
       : lattice_(&lattice), fill_(&fill),
         interaction_(lattice, fill, estimator), areas_(lattice, areaEstimator),
         traversal_(lattice) {}
+
+  void setTraversalEngine(TraversalEngine e) {
+    interaction_.setTraversalEngine(e);
+  }
+  TraversalEngine traversalEngine() const {
+    return interaction_.traversalEngine();
+  }
+
+  /// Rebuilds the acceleration structure AND the per-cell caches from the
+  /// current fills. `trace` calls it itself; a caller driving
+  /// `traceToSurface` directly -- the ion walker does -- must call it before
+  /// its parallel region.
+  ///
+  /// The area cache exists because deposit() runs per ENCOUNTER -- tens of
+  /// millions of times per step -- and each call asked two 3^D
+  /// neighbourhoods for a 27-point area stencil that cannot change while the
+  /// rays fly: the fills are frozen for the whole trace. Computing every
+  /// cell's area once turns those stencils into reads of the same values.
+  void prepareTransport() const {
+    interaction_.prepare();
+    const auto &dims = lattice_->dims();
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+    areaCache_.assign(fill_->size(), T(0));
+#pragma omp parallel for schedule(static)
+    for (long long flat = 0; flat < static_cast<long long>(sites); ++flat) {
+      std::array<int, D> idx{};
+      size_t rem = static_cast<size_t>(flat);
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id >= 0)
+        areaCache_[id] = areas_.interfaceArea(*fill_, idx);
+    }
+  }
+
+  /// The cached interface area at a lattice coordinate; zero off the grid.
+  /// Falls back to the direct stencil when no cache has been built, so a
+  /// caller that never traced still gets the right answer.
+  T areaAt(const std::array<int, D> &idx) const {
+    const int id = lattice_->cellId(idx);
+    if (id < 0)
+      return T(0);
+    if (areaCache_.size() == fill_->size())
+      return areaCache_[id];
+    return areas_.interfaceArea(*fill_, idx);
+  }
 
   /// Credits `amount` to the interface at `idx`, spread over the local
   /// interface in proportion to the area each cell carries.
@@ -81,7 +132,7 @@ public:
       }
       if (lattice_->cellId(probe) < 0)
         continue;
-      totalArea += areas_.interfaceArea(*fill_, probe);
+      totalArea += areaAt(probe);
     }
     if (totalArea <= T(0)) {
       const int id = lattice_->cellId(idx);
@@ -99,7 +150,7 @@ public:
       const int id = lattice_->cellId(probe);
       if (id < 0)
         continue;
-      const T area = areas_.interfaceArea(*fill_, probe);
+      const T area = areaAt(probe);
       if (area > T(0))
         collected[id] += amount * area / totalArea;
     }
@@ -201,6 +252,7 @@ public:
   Result trace(size_t numRays, T sourceFlux, const std::vector<T> &sticking,
                T cosinePower = T(1), unsigned seed = 1,
                T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
+    prepareTransport(); // (re)build the BVH before any ray flies
     const auto &dims = lattice_->dims();
     const auto &minCorner = lattice_->minCorner();
     const T delta = lattice_->gridDelta();
@@ -378,7 +430,7 @@ public:
       T faceArea = 1;
       for (int d = 0; d < D - 1; ++d)
         faceArea *= delta;
-      const T area = areas_.interfaceArea(*fill_, idx);
+      const T area = areaAt(idx);
       if (area > T(1e-2) * faceArea)
         result.flux[id] = collected[id] / area;
     }
@@ -417,7 +469,7 @@ public:
       const int id = lattice_->cellId(idx);
       if (id < 0)
         continue;
-      if (areas_.interfaceArea(*fill_, idx) <= minArea)
+      if (areaAt(idx) <= minArea)
         continue;
 
       T sum = 0, weight = 0;
@@ -431,7 +483,7 @@ public:
         const int nid = lattice_->cellId(probe);
         if (nid < 0)
           continue;
-        const T area = areas_.interfaceArea(*fill_, probe);
+        const T area = areaAt(probe);
         if (area <= minArea)
           continue;
         sum += flux[nid] * area;
