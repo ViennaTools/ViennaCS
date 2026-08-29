@@ -175,8 +175,7 @@ public:
     const auto &minCorner = lattice_->minCorner();
 
     for (int crossing = 0; crossing < 64; ++crossing) {
-      const auto hit =
-          interaction_.firstHit(origin, direction, rng, armAfter);
+      const auto hit = interaction_.firstHit(origin, direction, rng, armAfter);
       if (hit.hit())
         return hit;
 
@@ -194,7 +193,8 @@ public:
       for (int d = 0; d < D - 1; ++d) { // lateral axes only
         const T lo = minCorner[d];
         const T hi = minCorner[d] + delta * static_cast<T>(dims[d]);
-        const T distance = std::min(std::abs(exit[d] - lo), std::abs(exit[d] - hi));
+        const T distance =
+            std::min(std::abs(exit[d] - lo), std::abs(exit[d] - hi));
         if (distance < closest) {
           closest = distance;
           axis = d;
@@ -212,7 +212,7 @@ public:
   }
 
   struct Result {
-    std::vector<T> flux;    ///< per cell, in the units of `sourceFlux`
+    std::vector<T> flux; ///< per cell, in the units of `sourceFlux`
     size_t raysTraced = 0;
     size_t raysAbsorbed = 0; ///< rays that met the surface at least once
     size_t reemissions = 0;
@@ -234,9 +234,9 @@ public:
   /// It matters more than tidiness. Surface velocity is a nonlinear function
   /// of flux, and a growing front is unstable to noise in it: a cell that
   /// samples high grows faster, protrudes, and then genuinely collects more.
-  Result trace(size_t numRays, T sourceFlux, T sticking,
-               T cosinePower = T(1), unsigned seed = 1,
-               T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
+  Result trace(size_t numRays, T sourceFlux, T sticking, T cosinePower = T(1),
+               unsigned seed = 1, T weightCutoff = T(1e-4),
+               int smoothingNeighbors = 1) const {
     return trace(numRays, sourceFlux, std::vector<T>(fill_->size(), sticking),
                  cosinePower, seed, weightCutoff, smoothingNeighbors);
   }
@@ -313,103 +313,108 @@ public:
 
 #pragma omp for schedule(static)
       for (long long r = 0; r < static_cast<long long>(numRays); ++r) {
-      std::uniform_real_distribution<T> uni(T(0), T(1));
-      std::array<T, D> origin{}, direction{};
-      for (int d = 0; d < D - 1; ++d)
-        origin[d] = sourceMin[d] + (sourceMax[d] - sourceMin[d]) * uni(rng);
-      origin[D - 1] = sourceMax[D - 1];
+        std::uniform_real_distribution<T> uni(T(0), T(1));
+        std::array<T, D> origin{}, direction{};
+        for (int d = 0; d < D - 1; ++d)
+          origin[d] = sourceMin[d] + (sourceMax[d] - sourceMin[d]) * uni(rng);
+        origin[D - 1] = sourceMax[D - 1];
 
-      // Sample the direction in THREE dimensions and, in 2D, project it onto
-      // the plane. That is what ViennaRay does, and it is not a detail: the
-      // polar angle of the 3D cosine law is not the angle of the 2D one.
-      //
-      // Applying cos(theta) = u^(1/(n+1)) directly as a 2D angle gives a
-      // cumulative of sin^2(theta) where 2D requires sin(theta) -- far too
-      // collimated about the vertical. Down a trench of aspect ratio 1.5 that
-      // put only sin^2(18.4 deg) = 0.10 of the field flux on the floor against
-      // the 0.32 the geometry allows, so the floor received a third of what
-      // line of sight alone would deliver. Projecting a 3D sample recovers the
-      // 2D law exactly, for any cosine power, without a special case.
-      const T cosTheta = std::pow(uni(rng), exponent);
-      const T sinTheta = std::sqrt(std::max(T(0), T(1) - cosTheta * cosTheta));
-      const T phi = T(2) * T(M_PI) * uni(rng);
-      if constexpr (D == 2) {
-        const T dx = std::cos(phi) * sinTheta;
-        const T dy = -cosTheta;
-        const T norm = std::sqrt(dx * dx + dy * dy);
-        direction[0] = dx / norm;
-        direction[1] = dy / norm;
-      } else {
-        direction[0] = std::cos(phi) * sinTheta;
-        direction[1] = std::sin(phi) * sinTheta;
-        direction[2] = -cosTheta;
-      }
-
-      T weight = rayRate;
-      bool absorbed = false;
-      for (int bounce = 0; bounce < 1000; ++bounce) {
-        const auto hit = traceToSurface(origin, direction, rng);
-        if (!hit.hit())
-          break;
-        absorbed = true;
-        // The FULL weight, not weight * sticking. What a surface receives is
-        // what arrives at it; whether it sticks is the rate law's business,
-        // and it applies the sticking itself. Depositing the absorbed part
-        // here instead would apply it twice. The sticking still governs how
-        // much of the ray survives to carry on.
-        deposit(mine, hit.index, weight);
-        weight *= (T(1) - sticking[hit.cellId]);
-        if (weight <= rayRate * weightCutoff)
-          break;
-
-        // Re-emit about the local normal, from OUTSIDE the interface.
+        // Sample the direction in THREE dimensions and, in 2D, project it onto
+        // the plane. That is what ViennaRay does, and it is not a detail: the
+        // polar angle of the 3D cosine law is not the angle of the 2D one.
         //
-        // A fractional interface is two or three cells thick, so a ray nudged
-        // out by a fraction of a cell is still inside it and can interact
-        // again immediately -- and where the sticking is small it keeps its
-        // full weight and deposits that full weight every time. On a binary
-        // geometry this cannot happen: the ray leaves the one solid cell and
-        // is gone. On a fractional one it inflated the measured flux from an
-        // incident 1000 to 1600 over a few steps, and the growth rate with it.
-        //
-        // So the ray is placed past the last cell holding any material along
-        // its outward normal. Having left the surface, it restarts outside it.
-        Vec3D<T> normal3{0, 0, 0};
-        for (int d = 0; d < D; ++d)
-          normal3[d] = hit.normal[d];
-        const auto newDir = viennaray::ReflectionDiffuse<T, D>(normal3, rng);
+        // Applying cos(theta) = u^(1/(n+1)) directly as a 2D angle gives a
+        // cumulative of sin^2(theta) where 2D requires sin(theta) -- far too
+        // collimated about the vertical. Down a trench of aspect ratio 1.5 that
+        // put only sin^2(18.4 deg) = 0.10 of the field flux on the floor
+        // against the 0.32 the geometry allows, so the floor received a third
+        // of what line of sight alone would deliver. Projecting a 3D sample
+        // recovers the 2D law exactly, for any cosine power, without a special
+        // case.
+        const T cosTheta = std::pow(uni(rng), exponent);
+        const T sinTheta =
+            std::sqrt(std::max(T(0), T(1) - cosTheta * cosTheta));
+        const T phi = T(2) * T(M_PI) * uni(rng);
+        if constexpr (D == 2) {
+          const T dx = std::cos(phi) * sinTheta;
+          const T dy = -cosTheta;
+          const T norm = std::sqrt(dx * dx + dy * dy);
+          direction[0] = dx / norm;
+          direction[1] = dy / norm;
+        } else {
+          direction[0] = std::cos(phi) * sinTheta;
+          direction[1] = std::sin(phi) * sinTheta;
+          direction[2] = -cosTheta;
+        }
 
-        // Restart just outside the interface it was emitted from. Three
-        // schemes were measured -- this, a gate on reaching an empty cell, and
-        // a distance epsilon -- and all three land within a few percent of one
-        // another, so the restart is NOT what separates this arm from the
-        // level-set one. This one is kept because it costs the blanket least.
-        int axis = 0;
-        T steepest = 0;
-        for (int d = 0; d < D; ++d)
-          if (std::abs(normal3[d]) > steepest) {
-            steepest = std::abs(normal3[d]);
-            axis = d;
-          }
-        const int outward = normal3[axis] > 0 ? 1 : -1;
-        int clear = 1;
-        auto probe = hit.index;
-        for (int stepOut = 0; stepOut < 8; ++stepOut) {
-          probe[axis] += outward;
-          const int nid = lattice_->cellId(probe);
-          if (nid < 0 || (*fill_)[nid] <= T(1e-9))
+        T weight = rayRate;
+        bool absorbed = false;
+        for (int bounce = 0; bounce < 1000; ++bounce) {
+          const auto hit = traceToSurface(origin, direction, rng);
+          if (!hit.hit())
             break;
-          ++clear;
+          absorbed = true;
+          // The FULL weight, not weight * sticking. What a surface receives is
+          // what arrives at it; whether it sticks is the rate law's business,
+          // and it applies the sticking itself. Depositing the absorbed part
+          // here instead would apply it twice. The sticking still governs how
+          // much of the ray survives to carry on.
+          deposit(mine, hit.index, weight);
+          weight *= (T(1) - sticking[hit.cellId]);
+          if (weight <= rayRate * weightCutoff)
+            break;
+
+          // Re-emit about the local normal, from OUTSIDE the interface.
+          //
+          // A fractional interface is two or three cells thick, so a ray nudged
+          // out by a fraction of a cell is still inside it and can interact
+          // again immediately -- and where the sticking is small it keeps its
+          // full weight and deposits that full weight every time. On a binary
+          // geometry this cannot happen: the ray leaves the one solid cell and
+          // is gone. On a fractional one it inflated the measured flux from an
+          // incident 1000 to 1600 over a few steps, and the growth rate with
+          // it.
+          //
+          // So the ray is placed past the last cell holding any material along
+          // its outward normal. Having left the surface, it restarts outside
+          // it.
+          Vec3D<T> normal3{0, 0, 0};
+          for (int d = 0; d < D; ++d)
+            normal3[d] = hit.normal[d];
+          const auto newDir = viennaray::ReflectionDiffuse<T, D>(normal3, rng);
+
+          // Restart just outside the interface it was emitted from. Three
+          // schemes were measured -- this, a gate on reaching an empty cell,
+          // and a distance epsilon -- and all three land within a few percent
+          // of one another, so the restart is NOT what separates this arm from
+          // the level-set one. This one is kept because it costs the blanket
+          // least.
+          int axis = 0;
+          T steepest = 0;
+          for (int d = 0; d < D; ++d)
+            if (std::abs(normal3[d]) > steepest) {
+              steepest = std::abs(normal3[d]);
+              axis = d;
+            }
+          const int outward = normal3[axis] > 0 ? 1 : -1;
+          int clear = 1;
+          auto probe = hit.index;
+          for (int stepOut = 0; stepOut < 8; ++stepOut) {
+            probe[axis] += outward;
+            const int nid = lattice_->cellId(probe);
+            if (nid < 0 || (*fill_)[nid] <= T(1e-9))
+              break;
+            ++clear;
+          }
+          for (int d = 0; d < D; ++d) {
+            origin[d] = hit.point[d] +
+                        normal3[d] * delta * (static_cast<T>(clear) + T(1e-3));
+            direction[d] = newDir[d];
+          }
         }
-        for (int d = 0; d < D; ++d) {
-          origin[d] = hit.point[d] +
-                      normal3[d] * delta * (static_cast<T>(clear) + T(1e-3));
-          direction[d] = newDir[d];
-        }
-      }
-      if (absorbed)
+        if (absorbed)
 #pragma omp atomic
-        ++result.raysAbsorbed;
+          ++result.raysAbsorbed;
       }
 
 #pragma omp critical

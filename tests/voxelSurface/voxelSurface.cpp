@@ -67,8 +67,7 @@ cs::DenseCellSet<T, D> makeTrenchCellSet(T gridDelta, T depth) {
   lo[D - 1] = -3.;
   hi[D - 1] = 1.;
   auto trench = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
-  ls::MakeGeometry<T, D>(trench,
-                         ls::SmartPointer<ls::Box<T, D>>::New(lo, hi))
+  ls::MakeGeometry<T, D>(trench, ls::SmartPointer<ls::Box<T, D>>::New(lo, hi))
       .apply();
   ls::BooleanOperation<T, D>(substrate, trench,
                              ls::BooleanOperationEnum::RELATIVE_COMPLEMENT)
@@ -111,7 +110,8 @@ int bruteForceHit(const cs::VoxelSurface<T, D> &surface,
       pt[d] = origin[d] + dir[d] * t;
     bool inside = true;
     for (int d = 0; d < D; ++d) {
-      T lo = std::numeric_limits<T>::max(), hi = std::numeric_limits<T>::lowest();
+      T lo = std::numeric_limits<T>::max(),
+        hi = std::numeric_limits<T>::lowest();
       for (int k = 0; k < D; ++k) {
         lo = std::min(lo, surface.nodes[surface.faces[f][k]][d]);
         hi = std::max(hi, surface.nodes[surface.faces[f][k]][d]);
@@ -202,7 +202,8 @@ template <int D> void checkNormals(const std::string &label) {
         std::to_string(buried) + " buried faces");
 }
 
-template <int D> void checkAgainstTraversal(const std::string &label, int rays) {
+template <int D>
+void checkAgainstTraversal(const std::string &label, int rays) {
   const T gridDelta = 0.5;
   auto cellSet = makeTrenchCellSet<D>(gridDelta, -4.);
   cs::LatticeMap<T, D> lattice(cellSet);
@@ -363,8 +364,8 @@ void checkEmbree(int rays) {
         mismatch == 0,
         std::to_string(compared) + " rays, " + std::to_string(mismatch) +
             " disagreed");
-  check("embree: and at the same distance, to float precision",
-        worstT < 1e-4, "worst " + std::to_string(worstT));
+  check("embree: and at the same distance, to float precision", worstT < 1e-4,
+        "worst " + std::to_string(worstT));
 
   rtcReleaseScene(scene);
   geometry.releaseGeometry();

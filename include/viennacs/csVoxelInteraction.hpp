@@ -247,9 +247,8 @@ public:
     if (useBVH) {
       // One seed per ray segment: it decides every acceptance on this
       // segment idempotently, and a re-emitted segment draws a new one.
-      const std::uint64_t seed =
-          (static_cast<std::uint64_t>(rng()) << 32) ^
-          static_cast<std::uint64_t>(rng());
+      const std::uint64_t seed = (static_cast<std::uint64_t>(rng()) << 32) ^
+                                 static_cast<std::uint64_t>(rng());
       const auto raw = bvh_->firstHit(origin, direction, seed, armAfter);
       VoxelHit<T, D> result;
       if (!raw.hit())
@@ -299,8 +298,7 @@ public:
         // A partially filled cell transmits; a full one always interacts.
         const T chord = step.tExit - step.tEntry;
         const T probability =
-            f >= T(1) ? T(1)
-                      : T(1) - std::pow(T(1) - f, chord / delta);
+            f >= T(1) ? T(1) : T(1) - std::pow(T(1) - f, chord / delta);
         if (probability >= T(1) || uniform(rng) < probability) {
           result.cellId = lattice_->cellId(step.index);
           result.index = step.index;

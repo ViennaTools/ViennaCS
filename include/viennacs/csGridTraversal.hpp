@@ -53,7 +53,8 @@ public:
       // an axis is the span divided by the spacing. Round rather than
       // truncate: the division is exact in exact arithmetic and a hair short
       // of it in floating point.
-      dims_[d] = static_cast<int>(std::round((bb[1][d] - bb[0][d]) / gridDelta_));
+      dims_[d] =
+          static_cast<int>(std::round((bb[1][d] - bb[0][d]) / gridDelta_));
       if (dims_[d] < 1)
         dims_[d] = 1;
       total *= static_cast<size_t>(dims_[d]);
@@ -70,7 +71,8 @@ public:
       std::array<int, D> idx{};
       bool inside = true;
       for (int d = 0; d < D; ++d) {
-        idx[d] = static_cast<int>(std::round((corner[d] - min_[d]) / gridDelta_));
+        idx[d] =
+            static_cast<int>(std::round((corner[d] - min_[d]) / gridDelta_));
         if (idx[d] < 0 || idx[d] >= dims_[d])
           inside = false;
       }
@@ -129,8 +131,7 @@ template <int D> using LatticeIndex = typename detail::LatticeIndexOf<D>::type;
 /// the grid must find nothing to hit.
 template <class T, int D>
 inline T fillFieldAt(const LatticeMap<T, D> &lattice,
-                     const std::vector<T> &fill,
-                     const LatticeIndex<D> &idx) {
+                     const std::vector<T> &fill, const LatticeIndex<D> &idx) {
   const int id = lattice.cellId(idx);
   return id < 0 ? T(0) : fill[id];
 }
@@ -160,10 +161,9 @@ inline T fillFieldClamped(const LatticeMap<T, D> &lattice,
 /// volume of fluid. The narrow form differences only the two face
 /// neighbours: cheaper, and markedly more anisotropic.
 template <class T, int D>
-inline Vec3D<T> fillFieldGradient(const LatticeMap<T, D> &lattice,
-                                  const std::vector<T> &fill,
-                                  const LatticeIndex<D> &idx,
-                                  bool wide = true) {
+inline Vec3D<T>
+fillFieldGradient(const LatticeMap<T, D> &lattice, const std::vector<T> &fill,
+                  const LatticeIndex<D> &idx, bool wide = true) {
   const T delta = lattice.gridDelta();
   Vec3D<T> g{0, 0, 0};
 
@@ -306,7 +306,8 @@ public:
       step[d] = direction[d] > 0 ? 1 : -1;
       tDelta[d] = gridDelta_ / std::abs(direction[d]);
       const T boundary =
-          min_[d] + gridDelta_ * static_cast<T>(index[d] + (step[d] > 0 ? 1 : 0));
+          min_[d] +
+          gridDelta_ * static_cast<T>(index[d] + (step[d] > 0 ? 1 : 0));
       tMax[d] = (boundary - origin[d]) / direction[d];
     }
 

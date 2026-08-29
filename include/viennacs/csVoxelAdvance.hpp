@@ -215,8 +215,7 @@ public:
   }
 
   Step apply(std::vector<T> &fill, const std::vector<T> &velocity, T dt,
-             const std::vector<int> *solid = nullptr,
-             int wildcard = -1,
+             const std::vector<int> *solid = nullptr, int wildcard = -1,
              const std::vector<int> *velMat = nullptr) const {
     auto sameSolid = [&](int a, int b) {
       if (!solid)
@@ -314,83 +313,84 @@ public:
         const T volume = velocity[id] * area * dt;
         requested += volume;
 
-      // Placement is symmetric about the front, and the symmetry is not
-      // cosmetic. A share computed at an EMPTY cell (deposition reaching ahead
-      // of the front) walks inward to a cell holding material; a share
-      // computed at a FULL cell (etching reaching behind the front) walks
-      // outward to the partial front cell. Only the first half of this
-      // existed at first, so deposition stayed one cell sharp while an etch
-      // eroded the cell UNDER its front, widened the interface every step --
-      // 560 surface cells became 1144 over twenty -- and the measured motion
-      // decayed toward zero while the assigned velocities stayed correct. An
-      // interface must be drained from its front for the same reason it must
-      // be grown there.
-      int target = id;
-      if (fill[id] <= T(0)) {
-        // Empty, and ahead of the front: walk back along the normal until a
-        // cell with material is found.
-        const auto g = fillGradient(fill, idx);
-        int axis = 0;
-        T best = 0;
-        for (int d = 0; d < D; ++d)
-          if (std::abs(g[d]) > best) {
-            best = std::abs(g[d]);
-            axis = d;
+        // Placement is symmetric about the front, and the symmetry is not
+        // cosmetic. A share computed at an EMPTY cell (deposition reaching
+        // ahead of the front) walks inward to a cell holding material; a share
+        // computed at a FULL cell (etching reaching behind the front) walks
+        // outward to the partial front cell. Only the first half of this
+        // existed at first, so deposition stayed one cell sharp while an etch
+        // eroded the cell UNDER its front, widened the interface every step --
+        // 560 surface cells became 1144 over twenty -- and the measured motion
+        // decayed toward zero while the assigned velocities stayed correct. An
+        // interface must be drained from its front for the same reason it must
+        // be grown there.
+        int target = id;
+        if (fill[id] <= T(0)) {
+          // Empty, and ahead of the front: walk back along the normal until a
+          // cell with material is found.
+          const auto g = fillGradient(fill, idx);
+          int axis = 0;
+          T best = 0;
+          for (int d = 0; d < D; ++d)
+            if (std::abs(g[d]) > best) {
+              best = std::abs(g[d]);
+              axis = d;
+            }
+          target = -1;
+          if (best > T(1e-12)) {
+            const int back =
+                g[axis] > 0 ? -1 : 1; // opposite the outward normal
+            auto probe = idx;
+            for (int stepBack = 0; stepBack < 3 && target < 0; ++stepBack) {
+              probe[axis] += back;
+              const int nid = lattice_->cellId(probe);
+              if (nid < 0)
+                break;
+              // velMat names the material a velocity was computed for; it
+              // only refines the solid map, so without one there is nothing
+              // to refine and the plain material guard applies.
+              const bool matches = (velMat && solid)
+                                       ? ((*velMat)[id] == wildcard ||
+                                          (*solid)[nid] == wildcard ||
+                                          (*velMat)[id] == (*solid)[nid])
+                                       : sameSolid(id, nid);
+              if (fill[nid] > T(0) && matches)
+                target = nid;
+            }
           }
-        target = -1;
-        if (best > T(1e-12)) {
-          const int back = g[axis] > 0 ? -1 : 1; // opposite the outward normal
-          auto probe = idx;
-          for (int stepBack = 0; stepBack < 3 && target < 0; ++stepBack) {
-            probe[axis] += back;
-            const int nid = lattice_->cellId(probe);
-            if (nid < 0)
-              break;
-            // velMat names the material a velocity was computed for; it
-            // only refines the solid map, so without one there is nothing
-            // to refine and the plain material guard applies.
-            const bool matches =
-                (velMat && solid) ? ((*velMat)[id] == wildcard ||
-                                     (*solid)[nid] == wildcard ||
-                                     (*velMat)[id] == (*solid)[nid])
-                                  : sameSolid(id, nid);
-            if (fill[nid] > T(0) && matches)
-              target = nid;
+          if (target < 0) {
+            requested -= volume; // nowhere to put it: do not claim it
+            continue;
           }
-        }
-        if (target < 0) {
-          requested -= volume; // nowhere to put it: do not claim it
-          continue;
-        }
-      } else if (fill[id] >= T(1)) {
-        // Full, behind the front: hand the share to the partial front cell,
-        // outward along the normal. If the interface is perfectly sharp there
-        // is no partial cell and this cell IS the front: keep it.
-        const auto g = fillGradient(fill, idx);
-        int axis = 0;
-        T best = 0;
-        for (int d = 0; d < D; ++d)
-          if (std::abs(g[d]) > best) {
-            best = std::abs(g[d]);
-            axis = d;
-          }
-        if (best > T(1e-12)) {
-          const int outward = g[axis] > 0 ? 1 : -1;
-          auto probe = idx;
-          for (int stepOut = 0; stepOut < 3; ++stepOut) {
-            probe[axis] += outward;
-            const int nid = lattice_->cellId(probe);
-            if (nid < 0 || fill[nid] <= T(0))
-              break; // sharp interface: this cell is the front
-            if (!sameSolid(id, nid))
-              break; // a material boundary is a wall, not a conduit
-            if (fill[nid] < T(1)) {
-              target = nid;
-              break;
+        } else if (fill[id] >= T(1)) {
+          // Full, behind the front: hand the share to the partial front cell,
+          // outward along the normal. If the interface is perfectly sharp there
+          // is no partial cell and this cell IS the front: keep it.
+          const auto g = fillGradient(fill, idx);
+          int axis = 0;
+          T best = 0;
+          for (int d = 0; d < D; ++d)
+            if (std::abs(g[d]) > best) {
+              best = std::abs(g[d]);
+              axis = d;
+            }
+          if (best > T(1e-12)) {
+            const int outward = g[axis] > 0 ? 1 : -1;
+            auto probe = idx;
+            for (int stepOut = 0; stepOut < 3; ++stepOut) {
+              probe[axis] += outward;
+              const int nid = lattice_->cellId(probe);
+              if (nid < 0 || fill[nid] <= T(0))
+                break; // sharp interface: this cell is the front
+              if (!sameSolid(id, nid))
+                break; // a material boundary is a wall, not a conduit
+              if (fill[nid] < T(1)) {
+                target = nid;
+                break;
+              }
             }
           }
         }
-      }
         placed.emplace_back(target, volume / cellVolume);
       }
     }

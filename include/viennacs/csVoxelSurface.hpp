@@ -25,9 +25,10 @@ using namespace viennacore;
 /// struck.
 template <class T, int D> struct VoxelSurface {
   std::vector<Vec3D<T>> nodes;
-  std::vector<std::array<unsigned, D>> faces; ///< segments in 2D, triangles in 3D
-  std::vector<int> cellId;                    ///< owning cell, per face
-  std::vector<Vec3D<T>> normal;               ///< outward, per face
+  std::vector<std::array<unsigned, D>>
+      faces;                    ///< segments in 2D, triangles in 3D
+  std::vector<int> cellId;      ///< owning cell, per face
+  std::vector<Vec3D<T>> normal; ///< outward, per face
 
   size_t numFaces() const { return faces.size(); }
 };
@@ -103,9 +104,9 @@ VoxelSurface<T, D> extractVoxelSurface(const LatticeMap<T, D> &lattice,
           auto a = base, b = base;
           b[other] += 1;
           const bool lowFirst = (axis == 0) ? (sign < 0) : (sign > 0);
-          surface.faces.push_back(lowFirst
-                                      ? std::array<unsigned, 2>{nodeAt(a), nodeAt(b)}
-                                      : std::array<unsigned, 2>{nodeAt(b), nodeAt(a)});
+          surface.faces.push_back(
+              lowFirst ? std::array<unsigned, 2>{nodeAt(a), nodeAt(b)}
+                       : std::array<unsigned, 2>{nodeAt(b), nodeAt(a)});
           surface.cellId.push_back(owner);
           surface.normal.push_back(outward);
         } else {

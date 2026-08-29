@@ -23,8 +23,7 @@ void check(const std::string &name, bool ok, const std::string &detail = "") {
     ++failures;
 }
 
-template <int D>
-std::array<T, D> normalize(std::array<T, D> v) {
+template <int D> std::array<T, D> normalize(std::array<T, D> v) {
   T n = 0;
   for (int d = 0; d < D; ++d)
     n += v[d] * v[d];
@@ -43,7 +42,8 @@ bruteForce(const std::array<T, D> &origin, const std::array<T, D> &dir,
            T gridDelta) {
   std::vector<std::array<int, D>> cells;
   const T ds = gridDelta * 1e-4;
-  const T tEnd = gridDelta * 4 * D * (*std::max_element(dims.begin(), dims.end()));
+  const T tEnd =
+      gridDelta * 4 * D * (*std::max_element(dims.begin(), dims.end()));
   for (T t = 0; t < tEnd; t += ds) {
     std::array<int, D> idx{};
     bool inside = true;
@@ -62,8 +62,8 @@ bruteForce(const std::array<T, D> &origin, const std::array<T, D> &dir,
 }
 
 template <int D>
-void compareWithBruteForce(const std::string &label, int numRays,
-                           unsigned seed, T gridDelta) {
+void compareWithBruteForce(const std::string &label, int numRays, unsigned seed,
+                           T gridDelta) {
   std::array<int, D> dims{};
   std::array<T, D> min{};
   for (int d = 0; d < D; ++d) {
@@ -265,14 +265,13 @@ template <int D> void checkEarlyStop(const std::string &label) {
   origin[D - 1] = 20.0;
 
   int seen = 0;
-  size_t visited = traversal.traverse(origin, dir,
-                                      [&](viennacs::GridStep<T, D>) {
-                                        ++seen;
-                                        return seen < 3;
-                                      });
+  size_t visited =
+      traversal.traverse(origin, dir, [&](viennacs::GridStep<T, D>) {
+        ++seen;
+        return seen < 3;
+      });
   check(label + ": the walk stops when the visitor says so",
-        visited == 3 && seen == 3,
-        std::to_string(visited) + " cells visited");
+        visited == 3 && seen == 3, std::to_string(visited) + " cells visited");
 }
 
 int main() {

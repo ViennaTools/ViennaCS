@@ -61,8 +61,8 @@ cs::DenseCellSet<T, D> makeCellSet(T gridDelta, bool withTrench, bool withCover,
 
   auto substrate =
       ls::SmartPointer<ls::Domain<T, D>>::New(bounds, boundaryConds, gridDelta);
-  ls::MakeGeometry<T, D>(
-      substrate, ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
+  ls::MakeGeometry<T, D>(substrate,
+                         ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
       .apply();
 
   if (withTrench) {
@@ -78,8 +78,8 @@ cs::DenseCellSet<T, D> makeCellSet(T gridDelta, bool withTrench, bool withCover,
     ls::MakeGeometry<T, D>(
         trench, ls::SmartPointer<ls::Box<T, D>>::New(minCorner, maxCorner))
         .apply();
-    ls::BooleanOperation<T, D>(
-        substrate, trench, ls::BooleanOperationEnum::RELATIVE_COMPLEMENT)
+    ls::BooleanOperation<T, D>(substrate, trench,
+                               ls::BooleanOperationEnum::RELATIVE_COMPLEMENT)
         .apply();
   }
 
@@ -114,8 +114,8 @@ void checkMapping(const std::string &label, bool withTrench, bool withCover,
     const auto centre = cellSet.getCellCenter(c);
     std::array<int, D> idx{};
     for (int d = 0; d < D; ++d)
-      idx[d] = static_cast<int>(
-          std::floor((centre[d] - minCorner[d]) / gridDelta));
+      idx[d] =
+          static_cast<int>(std::floor((centre[d] - minCorner[d]) / gridDelta));
 
     if (lattice.cellId(idx) != static_cast<int>(c))
       ++roundTripFails;
@@ -157,8 +157,8 @@ void checkMapping(const std::string &label, bool withTrench, bool withCover,
   //    about the -1 path
   const bool hasHoles = occupied < sites;
   if (depth > 0)
-    check(label + ": a set spanning the gas region fills its lattice", !hasHoles,
-          std::to_string(sites - occupied) + " empty sites");
+    check(label + ": a set spanning the gas region fills its lattice",
+          !hasHoles, std::to_string(sites - occupied) + " empty sites");
   else
     check(label + ": a trench below the cut plane leaves holes (the -1 path)",
           hasHoles, std::to_string(sites - occupied) + " empty sites");
@@ -241,7 +241,8 @@ template <int D> void checkTraversalThroughLattice(const std::string &label) {
       throughTrench.push_back(lattice.cellId(s.index));
     return true;
   });
-  check(label + ": a column through the trench sees fewer cells than a solid one",
+  check(label +
+            ": a column through the trench sees fewer cells than a solid one",
         throughTrench.size() < ids.size(),
         std::to_string(throughTrench.size()) + " vs " +
             std::to_string(ids.size()));

@@ -39,8 +39,7 @@ void check(const std::string &name, bool ok, const std::string &detail = "") {
 
 /// A block of solid, as a lattice with every cell present. The geometry is
 /// then written into the filling fractions, not into which cells exist.
-template <int D>
-cs::DenseCellSet<T, D> makeBlock(T gridDelta, T lo, T hi) {
+template <int D> cs::DenseCellSet<T, D> makeBlock(T gridDelta, T lo, T hi) {
   ls::BoundaryConditionEnum bc[D];
   for (int i = 0; i < D - 1; ++i)
     bc[i] = ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY;
@@ -55,8 +54,7 @@ cs::DenseCellSet<T, D> makeBlock(T gridDelta, T lo, T hi) {
   origin[D - 1] = hi;
   normal[D - 1] = 1.;
 
-  auto plane =
-      ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
+  auto plane = ls::SmartPointer<ls::Domain<T, D>>::New(bounds, bc, gridDelta);
   ls::MakeGeometry<T, D>(plane,
                          ls::SmartPointer<ls::Plane<T, D>>::New(origin, normal))
       .apply();
@@ -262,8 +260,7 @@ void checkAngleChain3D() {
   }
   T o[D3] = {0, 0, hi}, n[D3] = {0, 0, 1};
   auto pl = ls::SmartPointer<ls::Domain<T, D3>>::New(bounds, bc, gridDelta);
-  ls::MakeGeometry<T, D3>(pl,
-                          ls::SmartPointer<ls::Plane<T, D3>>::New(o, n))
+  ls::MakeGeometry<T, D3>(pl, ls::SmartPointer<ls::Plane<T, D3>>::New(o, n))
       .apply();
   std::vector<ls::SmartPointer<ls::Domain<T, D3>>> lss{pl};
   cs::DenseCellSet<T, D3> cellSet;
@@ -282,15 +279,14 @@ void checkAngleChain3D() {
   for (const T tilt : {15., 30., 60.}) {
     for (const T azim : {0., 22.5, 45.}) {
       const T th = tilt * M_PI / 180., ph = azim * M_PI / 180.;
-      const V3 nTrue{std::sin(th) * std::cos(ph),
-                     std::sin(th) * std::sin(ph), std::cos(th)};
+      const V3 nTrue{std::sin(th) * std::cos(ph), std::sin(th) * std::sin(ph),
+                     std::cos(th)};
       std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-      cs::fillFromSignedDistance<T, D3>(
-          lattice, fill, [&](const V3 &p) {
-            return p[0] * nTrue[0] + p[1] * nTrue[1] + p[2] * nTrue[2];
-          });
-      for (const auto est :
-           {cs::NormalEstimator::Face, cs::NormalEstimator::FillGradientYoungs}) {
+      cs::fillFromSignedDistance<T, D3>(lattice, fill, [&](const V3 &p) {
+        return p[0] * nTrue[0] + p[1] * nTrue[1] + p[2] * nTrue[2];
+      });
+      for (const auto est : {cs::NormalEstimator::Face,
+                             cs::NormalEstimator::FillGradientYoungs}) {
         cs::VoxelInteraction<T, D3> interaction(lattice, fill, est);
         std::mt19937 rng(5);
         std::uniform_real_distribution<T> u(-7., 7.);
@@ -329,9 +325,10 @@ void checkAngleChain3D() {
   check("3D: the incidence angle the yield consumes is right to a few degrees",
         worstYoungsIncidence < 4.0,
         "worst " + std::to_string(worstYoungsIncidence) + " deg");
-  check("3D: Youngs is azimuthally uniform, which a separable stencil must earn",
-        youngsHi - youngsLo < 2.0,
-        "spread " + std::to_string(youngsHi - youngsLo) + " deg at 30 deg tilt");
+  check(
+      "3D: Youngs is azimuthally uniform, which a separable stencil must earn",
+      youngsHi - youngsLo < 2.0,
+      "spread " + std::to_string(youngsHi - youngsLo) + " deg at 30 deg tilt");
   check("3D: the face normal misreads incidence by the tilt itself",
         bestFaceIncidence > 10.0,
         "best " + std::to_string(bestFaceIncidence) + " deg");

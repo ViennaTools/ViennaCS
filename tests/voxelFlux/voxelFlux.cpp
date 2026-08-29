@@ -34,8 +34,7 @@ void check(const std::string &name, bool ok, const std::string &detail = "") {
     ++failures;
 }
 
-template <int D>
-cs::DenseCellSet<T, D> makeDomain(T gridDelta, T lo, T hi) {
+template <int D> cs::DenseCellSet<T, D> makeDomain(T gridDelta, T lo, T hi) {
   ls::BoundaryConditionEnum bc[D];
   for (int i = 0; i < D - 1; ++i)
     bc[i] = ls::BoundaryConditionEnum::REFLECTIVE_BOUNDARY;
@@ -108,10 +107,9 @@ template <int D> void checkBlanketNormalisation(const std::string &label) {
   auto cellSet = makeDomain<D>(gridDelta, -12., 12.);
   cs::LatticeMap<T, D> lattice(cellSet);
   std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-  cs::fillFromSignedDistance<T, D>(lattice, fill,
-                                   [](const viennacore::Vec3D<T> &p) {
-                                     return p[D - 1] - T(0);
-                                   });
+  cs::fillFromSignedDistance<T, D>(
+      lattice, fill,
+      [](const viennacore::Vec3D<T> &p) { return p[D - 1] - T(0); });
 
   cs::VoxelFlux<T, D> flux(lattice, fill);
   const T sourceFlux = 100.0;
@@ -138,13 +136,12 @@ template <int D> void checkBlanketNormalisation(const std::string &label) {
             << std::setprecision(2) << mean << " of " << sourceFlux
             << " sent  (ratio " << std::setprecision(3) << ratio << ")\n";
   check(label + ": a blanket measures the flux that was sent",
-        std::abs(ratio - 1.0) < 0.05,
-        "ratio " + std::to_string(ratio));
+        std::abs(ratio - 1.0) < 0.05, "ratio " + std::to_string(ratio));
   // A handful still leave: a ray can reflect off a lateral boundary many
   // times over and run out of crossings, and one re-emitted upwards is gone
   // for good. It must be a handful, not a fraction.
-  const T escaped = T(result.raysTraced - result.raysAbsorbed) /
-                    T(result.raysTraced);
+  const T escaped =
+      T(result.raysTraced - result.raysAbsorbed) / T(result.raysTraced);
   check(label + ": essentially every ray finds the surface", escaped < 1e-3,
         std::to_string(100 * escaped) + "% escaped");
 }
@@ -161,8 +158,7 @@ void checkShadowing() {
   cs::fillFromSignedDistance<T, D>(
       lattice, fill, [&](const viennacore::Vec3D<T> &p) {
         const T toSurface = p[1];
-        const T inTrench =
-            std::max(std::abs(p[0]) - 5.0, -(p[1] + 30.0));
+        const T inTrench = std::max(std::abs(p[0]) - 5.0, -(p[1] + 30.0));
         return std::max(toSurface, -inTrench);
       });
 
@@ -227,9 +223,8 @@ template <int D> void checkPartialProfile(const std::string &label) {
     for (const T sticking : {T(1.0), T(0.3), T(4.4e-4)}) {
       std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
       cs::fillFromSignedDistance<T, D>(
-          lattice, fill, [&](const viennacore::Vec3D<T> &p) {
-            return p[D - 1] - offset;
-          });
+          lattice, fill,
+          [&](const viennacore::Vec3D<T> &p) { return p[D - 1] - offset; });
       cs::VoxelFlux<T, D> flux(lattice, fill);
       const T sourceFlux = 100.0;
       const auto result =

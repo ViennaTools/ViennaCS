@@ -81,10 +81,8 @@ void checkConservation() {
   auto cellSet = makeBlock<D>(gridDelta, -15., 15.);
   cs::LatticeMap<T, D> lattice(cellSet);
   std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-  cs::fillFromSignedDistance<T, D>(lattice, fill,
-                                   [](const viennacore::Vec3D<T> &p) {
-                                     return p[1] - T(0);
-                                   });
+  cs::fillFromSignedDistance<T, D>(
+      lattice, fill, [](const viennacore::Vec3D<T> &p) { return p[1] - T(0); });
 
   cs::VoxelAdvance<T, D> advance(lattice);
   std::vector<T> velocity(fill.size(), T(0.2)); // uniform growth
@@ -127,10 +125,8 @@ void checkFlatAdvance() {
   auto cellSet = makeBlock<D>(gridDelta, -15., 15.);
   cs::LatticeMap<T, D> lattice(cellSet);
   std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-  cs::fillFromSignedDistance<T, D>(lattice, fill,
-                                   [](const viennacore::Vec3D<T> &p) {
-                                     return p[1] - T(0);
-                                   });
+  cs::fillFromSignedDistance<T, D>(
+      lattice, fill, [](const viennacore::Vec3D<T> &p) { return p[1] - T(0); });
 
   cs::VoxelAdvance<T, D> advance(lattice);
   std::vector<T> velocity(fill.size(), T(0.3));
@@ -169,10 +165,10 @@ void checkTiltedAdvance() {
       auto cellSet = makeBlock<D>(gridDelta, -25., 25.);
       cs::LatticeMap<T, D> lattice(cellSet);
       std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-      cs::fillFromSignedDistance<T, D>(
-          lattice, fill, [&](const viennacore::Vec3D<T> &p) {
-            return p[0] * n[0] + p[1] * n[1];
-          });
+      cs::fillFromSignedDistance<T, D>(lattice, fill,
+                                       [&](const viennacore::Vec3D<T> &p) {
+                                         return p[0] * n[0] + p[1] * n[1];
+                                       });
       cs::VoxelAdvance<T, D> advance(lattice, estimator);
       std::vector<T> velocity(fill.size(), T(0.25));
 
@@ -215,10 +211,8 @@ void checkReversibility() {
   auto cellSet = makeBlock<D>(gridDelta, -15., 15.);
   cs::LatticeMap<T, D> lattice(cellSet);
   std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
-  cs::fillFromSignedDistance<T, D>(lattice, fill,
-                                   [](const viennacore::Vec3D<T> &p) {
-                                     return p[1] - T(0);
-                                   });
+  cs::fillFromSignedDistance<T, D>(
+      lattice, fill, [](const viennacore::Vec3D<T> &p) { return p[1] - T(0); });
   const T before = totalVolume<D>(fill, gridDelta);
 
   cs::VoxelAdvance<T, D> advance(lattice);
@@ -240,7 +234,6 @@ void checkReversibility() {
         "drift " + std::to_string(drift) + " over " + std::to_string(moved) +
             " moved (" + std::to_string(100 * drift / moved) + "%)");
 }
-
 
 /// Support must be a GEOMETRIC question, not a material one. A sub-cell-thick
 /// film of one material resting on a full substrate of another is attached
@@ -265,19 +258,22 @@ void checkThinFilmOnForeignSubstrate() {
   for (int i = 0; i < dims[0]; ++i) {
     for (int j = 0; j < y0; ++j) {
       const int id = lattice.cellId({i, j});
-      if (id < 0) continue;
+      if (id < 0)
+        continue;
       fill[id] = T(1);
       material[id] = substrateId;
     }
     const int id = lattice.cellId({i, y0});
-    if (id < 0) continue;
+    if (id < 0)
+      continue;
     fill[id] = T(0.4);
     material[id] = filmId;
   }
 
   T filmBefore = 0;
   for (size_t c = 0; c < fill.size(); ++c)
-    if (material[c] == filmId) filmBefore += fill[c];
+    if (material[c] == filmId)
+      filmBefore += fill[c];
 
   cs::VoxelAdvance<T, D> advance(lattice);
   std::vector<T> velocity(fill.size(), T(0)); // no motion: only the repairs run
@@ -285,7 +281,8 @@ void checkThinFilmOnForeignSubstrate() {
 
   T filmAfter = 0;
   for (size_t c = 0; c < fill.size(); ++c)
-    if (material[c] == filmId) filmAfter += fill[c];
+    if (material[c] == filmId)
+      filmAfter += fill[c];
 
   check("a thin film on a foreign substrate survives",
         std::abs(filmAfter - filmBefore) < T(1e-9),
@@ -293,7 +290,6 @@ void checkThinFilmOnForeignSubstrate() {
             std::to_string(filmAfter) + ", lost " +
             std::to_string(step.volumeLost));
 }
-
 
 /// The other half of the support rule: matter with nothing under it goes,
 /// including on the lattice edge, where the field-continuation convention
@@ -310,15 +306,19 @@ void checkDetachedSpecksRemoved() {
   for (int i = 0; i < dims[0]; ++i)
     for (int j = 0; j < y0; ++j) {
       const int id = lattice.cellId({i, j});
-      if (id >= 0) fill[id] = T(1);
+      if (id >= 0)
+        fill[id] = T(1);
     }
   // three specks in the gas: interior, on the lateral edge, and a flat pair
-  const std::array<std::array<int, 2>, 4> specks{{
-      {dims[0] / 2, y0 + 3}, {0, y0 + 3}, {2, y0 + 5}, {3, y0 + 5}}};
+  const std::array<std::array<int, 2>, 4> specks{
+      {{dims[0] / 2, y0 + 3}, {0, y0 + 3}, {2, y0 + 5}, {3, y0 + 5}}};
   T strayBefore = 0;
   for (const auto &sp : specks) {
     const int id = lattice.cellId(sp);
-    if (id >= 0) { fill[id] = T(0.3); strayBefore += T(0.3); }
+    if (id >= 0) {
+      fill[id] = T(0.3);
+      strayBefore += T(0.3);
+    }
   }
 
   cs::VoxelAdvance<T, D> advance(lattice);
@@ -328,7 +328,8 @@ void checkDetachedSpecksRemoved() {
   T strayAfter = 0;
   for (const auto &sp : specks) {
     const int id = lattice.cellId(sp);
-    if (id >= 0) strayAfter += fill[id];
+    if (id >= 0)
+      strayAfter += fill[id];
   }
   check("detached specks are removed, edge and flat pair included",
         strayAfter < T(1e-9),
