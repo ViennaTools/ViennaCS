@@ -36,6 +36,10 @@ template <class T, int D> class VoxelFlux {
   VoxelInteraction<T, D> interaction_;
   VoxelAdvance<T, D> areas_;
   mutable std::vector<T> areaCache_; ///< per-trace, fills frozen while rays fly
+  /// Whether the caches and the acceleration structure describe the CURRENT
+  /// fills. Set by prepareTransport, so several species traced against one
+  /// unchanged surface share a single build instead of rebuilding per trace.
+  mutable bool prepared_ = false;
   GridTraversal<T, D> traversal_;
 
 public:
@@ -64,6 +68,7 @@ public:
   /// rays fly: the fills are frozen for the whole trace. Computing every
   /// cell's area once turns those stencils into reads of the same values.
   void prepareTransport() const {
+    prepared_ = true;
     interaction_.prepare();
     const auto &dims = lattice_->dims();
     size_t sites = 1;
@@ -252,7 +257,8 @@ public:
   Result trace(size_t numRays, T sourceFlux, const std::vector<T> &sticking,
                T cosinePower = T(1), unsigned seed = 1,
                T weightCutoff = T(1e-4), int smoothingNeighbors = 1) const {
-    prepareTransport(); // (re)build the BVH before any ray flies
+    if (!prepared_)
+      prepareTransport(); // build the BVH and caches before any ray flies
     const auto &dims = lattice_->dims();
     const auto &minCorner = lattice_->minCorner();
     const T delta = lattice_->gridDelta();
