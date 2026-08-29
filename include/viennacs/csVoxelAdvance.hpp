@@ -49,10 +49,13 @@ public:
       : lattice_(&lattice), areaEstimator_(estimator) {}
 
   void setAreaEstimator(AreaEstimator e) { areaEstimator_ = e; }
+  /// The narrow stencil differences only the face neighbours: cheaper, and
+  /// markedly more anisotropic. It exists so the area estimate can be varied
+  /// with the normal estimate it is supposed to agree with.
+  void setWideStencil(bool wide) { wideStencil_ = wide; }
 
   T fillAt(const std::vector<T> &fill, const std::array<int, D> &idx) const {
-    const int id = lattice_->cellId(idx);
-    return id < 0 ? T(0) : fill[id];
+    return fillFieldAt(*lattice_, fill, idx);
   }
 
   /// The filling fraction for the purpose of a DERIVATIVE, with the lattice
@@ -69,53 +72,14 @@ public:
   /// question.
   T fillClamped(const std::vector<T> &fill,
                 const std::array<int, D> &idx) const {
-    auto inside = idx;
-    for (int d = 0; d < D; ++d)
-      inside[d] = std::min(std::max(inside[d], 0), lattice_->dims()[d] - 1);
-    const int id = lattice_->cellId(inside);
-    return id < 0 ? T(0) : fill[id];
+    return fillFieldClamped(*lattice_, fill, idx);
   }
 
   /// -grad(f) in physical units, unnormalised: its magnitude is the
   /// interfacial area per unit volume, its direction the outward normal.
   Vec3D<T> fillGradient(const std::vector<T> &fill,
                         const std::array<int, D> &idx) const {
-    const T delta = lattice_->gridDelta();
-    Vec3D<T> g{0, 0, 0};
-
-    int span = 1;
-    for (int d = 0; d < D; ++d)
-      span *= 3;
-    // Youngs' (1,2,1) weighting across the axes not being differenced. The
-    // normalisation is the total weight on one side, 2^(D-1), times the
-    // two-cell span of the central difference.
-    T total = 1;
-    for (int d = 0; d < D - 1; ++d)
-      total *= 4;
-    for (int s = 0; s < span; ++s) {
-      std::array<int, D> offset{};
-      int rem = s;
-      for (int d = 0; d < D; ++d) {
-        offset[d] = rem % 3 - 1;
-        rem /= 3;
-      }
-      auto probe = idx;
-      for (int d = 0; d < D; ++d)
-        probe[d] += offset[d];
-      const T f = fillClamped(fill, probe);
-      for (int d = 0; d < D; ++d) {
-        if (offset[d] == 0)
-          continue;
-        T weight = 1;
-        for (int k = 0; k < D; ++k)
-          if (k != d)
-            weight *= (offset[k] == 0) ? T(2) : T(1);
-        g[d] -= static_cast<T>(offset[d]) * weight * f;
-      }
-    }
-    for (int d = 0; d < D; ++d)
-      g[d] /= (total * T(2) * delta);
-    return g;
+    return fillFieldGradient(*lattice_, fill, idx, wideStencil_);
   }
 
   /// The interface area of one cell.
@@ -382,11 +346,14 @@ public:
             const int nid = lattice_->cellId(probe);
             if (nid < 0)
               break;
+            // velMat names the material a velocity was computed for; it
+            // only refines the solid map, so without one there is nothing
+            // to refine and the plain material guard applies.
             const bool matches =
-                velMat ? ((*velMat)[id] == wildcard ||
-                          (*solid)[nid] == wildcard ||
-                          (*velMat)[id] == (*solid)[nid])
-                       : sameSolid(id, nid);
+                (velMat && solid) ? ((*velMat)[id] == wildcard ||
+                                     (*solid)[nid] == wildcard ||
+                                     (*velMat)[id] == (*solid)[nid])
+                                  : sameSolid(id, nid);
             if (fill[nid] > T(0) && matches)
               target = nid;
           }
@@ -500,7 +467,14 @@ public:
     // it is volume that the geometry cannot represent and that every later
     // measurement counts anyway. Silane reached 5.67 that way, and reported
     // twice the growth it had.
-    const int maxSweeps = static_cast<int>(dims[0]) * 4;
+    // Surplus moves one cell per sweep along the axis the surface advances
+    // on, which is not dims[0]: a deep, narrow feature spills along the
+    // vertical. Size the cap by the longest axis so a legal spill chain can
+    // always complete rather than being clamped away as lost volume.
+    int longestAxis = dims[0];
+    for (int d = 1; d < D; ++d)
+      longestAxis = std::max(longestAxis, dims[d]);
+    const int maxSweeps = longestAxis * 4;
     std::vector<size_t> next;
     for (int sweep = 0; sweep < maxSweeps && !work.empty(); ++sweep) {
       next.clear();
@@ -641,8 +615,12 @@ public:
             const int nid = lattice_->cellId(nb);
             if (nid < 0 || supported[nid] || fill[nid] <= T(1e-12))
               continue;
-            if (!sameSolid(id, nid))
-              continue;
+            // NO material gate here: support is geometric. A sub-cell-thick
+            // film of one material resting on a full substrate of another is
+            // attached matter, and it can never seed the flood itself
+            // because no cell of it reaches fill 1. Gating the traversal by
+            // material deletes exactly the deposition cases this method is
+            // for. Material restricts where volume may MOVE, below.
             supported[nid] = 1;
             stack.push_back(flatten(nb));
           }

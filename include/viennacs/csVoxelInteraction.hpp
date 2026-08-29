@@ -178,8 +178,7 @@ public:
   /// The filling fraction at a lattice coordinate; zero where there is no
   /// cell, because a ray that leaves the grid must find nothing to hit.
   T fillAt(const std::array<int, D> &idx) const {
-    const int id = lattice_->cellId(idx);
-    return id < 0 ? T(0) : (*fill_)[id];
+    return fillFieldAt(*lattice_, *fill_, idx);
   }
 
   /// The same, for a DERIVATIVE: the lattice boundary is a cut through the
@@ -187,10 +186,7 @@ public:
   /// gradient. Reading zero instead would give every cell on the edge of the
   /// domain a normal pointing out of it.
   T fillClamped(const std::array<int, D> &idx) const {
-    auto inside = idx;
-    for (int d = 0; d < D; ++d)
-      inside[d] = std::min(std::max(inside[d], 0), lattice_->dims()[d] - 1);
-    return fillAt(inside);
+    return fillFieldClamped(*lattice_, *fill_, idx);
   }
 
   /// -grad(f), normalised. Falls back to the face normal where the gradient
@@ -203,41 +199,9 @@ public:
   /// and markedly more anisotropic.
   Vec3D<T> gradientNormal(const std::array<int, D> &idx,
                           const Vec3D<T> &faceNormal, bool wide) const {
-    Vec3D<T> n{0, 0, 0};
-
-    if (!wide) {
-      for (int d = 0; d < D; ++d) {
-        auto lo = idx, hi = idx;
-        lo[d] -= 1;
-        hi[d] += 1;
-        n[d] = T(0.5) * (fillClamped(lo) - fillClamped(hi)); // -d(fill)/dx
-      }
-    } else {
-      int span = 1;
-      for (int d = 0; d < D; ++d)
-        span *= 3;
-      for (int s = 0; s < span; ++s) {
-        std::array<int, D> offset{};
-        int rem = s;
-        for (int d = 0; d < D; ++d) {
-          offset[d] = rem % 3 - 1;
-          rem /= 3;
-        }
-        auto probe = idx;
-        for (int d = 0; d < D; ++d)
-          probe[d] += offset[d];
-        const T f = fillClamped(probe);
-        for (int d = 0; d < D; ++d) {
-          if (offset[d] == 0)
-            continue;
-          T weight = 1;
-          for (int k = 0; k < D; ++k)
-            if (k != d)
-              weight *= (offset[k] == 0) ? T(2) : T(1);
-          n[d] -= static_cast<T>(offset[d]) * weight * f; // -d(fill)/dx
-        }
-      }
-    }
+    // the stencil itself is shared with the advance, so the normal a rate law
+    // sees and the area that carries its velocity cannot drift apart
+    auto n = fillFieldGradient(*lattice_, *fill_, idx, wide);
 
     T norm = 0;
     for (int d = 0; d < D; ++d)

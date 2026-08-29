@@ -292,8 +292,14 @@ public:
     //
     // Each thread accumulates into its own buffer and they are summed at the
     // end: contention on a shared buffer would cost more than the tracing.
-    // Each also carries its own stream, so the result does not depend on how
-    // many threads ran, only on the seed.
+    // Each also carries its own stream, seeded from the run seed and the
+    // thread index. NOTE that this makes the result reproducible for a fixed
+    // (seed, thread count) pair, NOT across thread counts: a static schedule
+    // hands different rays to different streams when the count changes, so
+    // two runs of the same seed on different machines agree statistically,
+    // not bitwise. Seeding per RAY instead would buy bitwise reproducibility
+    // at one hash per ray; it is worth doing before the benchmark study, and
+    // it will shift every measured number by Monte-Carlo noise when it lands.
 #pragma omp parallel
     {
       std::vector<T> mine(fill_->size(), T(0));

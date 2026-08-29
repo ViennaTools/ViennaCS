@@ -2,8 +2,11 @@
 
 #include "csDenseCellSet.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
+#include <vector>
 
 namespace viennacs {
 
@@ -100,6 +103,115 @@ private:
     return flat;
   }
 };
+
+namespace detail {
+/// Wraps the lattice coordinate so that D is deduced from the LatticeMap
+/// alone: std::array takes a size_t extent while the lattice is templated on
+/// int D, and deducing from both at once is a mismatch.
+template <int D> struct LatticeIndexOf {
+  using type = std::array<int, static_cast<std::size_t>(D)>;
+};
+} // namespace detail
+
+template <int D> using LatticeIndex = typename detail::LatticeIndexOf<D>::type;
+
+/// THE FILL FIELD, read the two ways this method needs it.
+///
+/// These are free functions on purpose. The gradient below is the single
+/// definition of the interface geometry: VoxelInteraction normalises it into
+/// the surface normal a rate law sees, and VoxelAdvance takes its magnitude
+/// as the interface area that turns a velocity into a volume. The claim that
+/// "a mechanism sees an area and a normal that agree with each other" is only
+/// structurally true while both come from here; as two hand-copied stencils
+/// it was one edit away from a silent physics divergence.
+
+/// The fill at a lattice coordinate, zero off the lattice: a ray that leaves
+/// the grid must find nothing to hit.
+template <class T, int D>
+inline T fillFieldAt(const LatticeMap<T, D> &lattice,
+                     const std::vector<T> &fill,
+                     const LatticeIndex<D> &idx) {
+  const int id = lattice.cellId(idx);
+  return id < 0 ? T(0) : fill[id];
+}
+
+/// The same, for the purpose of a DERIVATIVE, with the opposite boundary
+/// convention: the lattice edge is a cut through the material, not a surface,
+/// so the field continues across it with zero gradient. Reading zero instead
+/// would give every cell on the edge of the domain a normal pointing out of
+/// it, and the bottom row of a solid block would grow downwards out of the
+/// grid.
+template <class T, int D>
+inline T fillFieldClamped(const LatticeMap<T, D> &lattice,
+                          const std::vector<T> &fill,
+                          const LatticeIndex<D> &idx) {
+  auto inside = idx;
+  for (int d = 0; d < D; ++d)
+    inside[d] = std::min(std::max(inside[d], 0), lattice.dims()[d] - 1);
+  return fillFieldAt(lattice, fill, inside);
+}
+
+/// -grad(f) in physical units, unnormalised: its direction is the outward
+/// normal, and its magnitude is the interfacial area per unit volume of a
+/// volume-fraction field.
+///
+/// `wide` sweeps the whole 3^D neighbourhood with a (1,2,1) weight across
+/// each axis other than the one being differenced -- Youngs' stencil, as in
+/// volume of fluid. The narrow form differences only the two face
+/// neighbours: cheaper, and markedly more anisotropic.
+template <class T, int D>
+inline Vec3D<T> fillFieldGradient(const LatticeMap<T, D> &lattice,
+                                  const std::vector<T> &fill,
+                                  const LatticeIndex<D> &idx,
+                                  bool wide = true) {
+  const T delta = lattice.gridDelta();
+  Vec3D<T> g{0, 0, 0};
+
+  if (!wide) {
+    for (int d = 0; d < D; ++d) {
+      auto lo = idx, hi = idx;
+      lo[d] -= 1;
+      hi[d] += 1;
+      g[d] = (fillFieldClamped(lattice, fill, lo) -
+              fillFieldClamped(lattice, fill, hi)) /
+             (T(2) * delta);
+    }
+    return g;
+  }
+
+  int span = 1;
+  for (int d = 0; d < D; ++d)
+    span *= 3;
+  // the normalisation is the total weight on one side, 2^(D-1), times the
+  // two-cell span of the central difference
+  T total = 1;
+  for (int d = 0; d < D - 1; ++d)
+    total *= 4;
+  for (int s = 0; s < span; ++s) {
+    std::array<int, D> offset{};
+    int rem = s;
+    for (int d = 0; d < D; ++d) {
+      offset[d] = rem % 3 - 1;
+      rem /= 3;
+    }
+    auto probe = idx;
+    for (int d = 0; d < D; ++d)
+      probe[d] += offset[d];
+    const T f = fillFieldClamped(lattice, fill, probe);
+    for (int d = 0; d < D; ++d) {
+      if (offset[d] == 0)
+        continue;
+      T weight = 1;
+      for (int k = 0; k < D; ++k)
+        if (k != d)
+          weight *= (offset[k] == 0) ? T(2) : T(1);
+      g[d] -= static_cast<T>(offset[d]) * weight * f;
+    }
+  }
+  for (int d = 0; d < D; ++d)
+    g[d] /= (total * T(2) * delta);
+  return g;
+}
 
 /// One cell of a ray's passage through the grid.
 template <class T, int D> struct GridStep {

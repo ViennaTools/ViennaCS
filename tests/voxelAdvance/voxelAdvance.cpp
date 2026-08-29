@@ -241,6 +241,102 @@ void checkReversibility() {
             " moved (" + std::to_string(100 * drift / moved) + "%)");
 }
 
+
+/// Support must be a GEOMETRIC question, not a material one. A sub-cell-thick
+/// film of one material resting on a full substrate of another is attached
+/// matter: no cell of the film ever reaches fill 1, so the film cannot seed
+/// the support flood itself, and if the flood refuses to cross the material
+/// boundary the whole film is classified unsupported and poured away. That is
+/// a silent deletion of legal geometry, and it is exactly the case a selective
+/// or conformal deposition produces on its first steps.
+void checkThinFilmOnForeignSubstrate() {
+  constexpr int D = 2;
+  const T gridDelta = 1.0;
+  auto cellSet = makeBlock<D>(gridDelta, -10., 10.);
+  cs::LatticeMap<T, D> lattice(cellSet);
+  const auto &dims = lattice.dims();
+
+  const int substrateId = 1, filmId = 2, gasId = 0;
+  std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
+  std::vector<int> material(cellSet.getNumberOfCells(), gasId);
+
+  // full substrate below y0, one row of a 0.4-filled film above it
+  const int y0 = dims[1] / 2;
+  for (int i = 0; i < dims[0]; ++i) {
+    for (int j = 0; j < y0; ++j) {
+      const int id = lattice.cellId({i, j});
+      if (id < 0) continue;
+      fill[id] = T(1);
+      material[id] = substrateId;
+    }
+    const int id = lattice.cellId({i, y0});
+    if (id < 0) continue;
+    fill[id] = T(0.4);
+    material[id] = filmId;
+  }
+
+  T filmBefore = 0;
+  for (size_t c = 0; c < fill.size(); ++c)
+    if (material[c] == filmId) filmBefore += fill[c];
+
+  cs::VoxelAdvance<T, D> advance(lattice);
+  std::vector<T> velocity(fill.size(), T(0)); // no motion: only the repairs run
+  const auto step = advance.apply(fill, velocity, T(0), &material, gasId);
+
+  T filmAfter = 0;
+  for (size_t c = 0; c < fill.size(); ++c)
+    if (material[c] == filmId) filmAfter += fill[c];
+
+  check("a thin film on a foreign substrate survives",
+        std::abs(filmAfter - filmBefore) < T(1e-9),
+        "film volume " + std::to_string(filmBefore) + " -> " +
+            std::to_string(filmAfter) + ", lost " +
+            std::to_string(step.volumeLost));
+}
+
+
+/// The other half of the support rule: matter with nothing under it goes,
+/// including on the lattice edge, where the field-continuation convention
+/// used for gradients would otherwise let a speck anchor itself forever.
+void checkDetachedSpecksRemoved() {
+  constexpr int D = 2;
+  const T gridDelta = 1.0;
+  auto cellSet = makeBlock<D>(gridDelta, -10., 10.);
+  cs::LatticeMap<T, D> lattice(cellSet);
+  const auto &dims = lattice.dims();
+
+  std::vector<T> fill(cellSet.getNumberOfCells(), T(0));
+  const int y0 = dims[1] / 2;
+  for (int i = 0; i < dims[0]; ++i)
+    for (int j = 0; j < y0; ++j) {
+      const int id = lattice.cellId({i, j});
+      if (id >= 0) fill[id] = T(1);
+    }
+  // three specks in the gas: interior, on the lateral edge, and a flat pair
+  const std::array<std::array<int, 2>, 4> specks{{
+      {dims[0] / 2, y0 + 3}, {0, y0 + 3}, {2, y0 + 5}, {3, y0 + 5}}};
+  T strayBefore = 0;
+  for (const auto &sp : specks) {
+    const int id = lattice.cellId(sp);
+    if (id >= 0) { fill[id] = T(0.3); strayBefore += T(0.3); }
+  }
+
+  cs::VoxelAdvance<T, D> advance(lattice);
+  std::vector<T> velocity(fill.size(), T(0));
+  const auto step = advance.apply(fill, velocity, T(0));
+
+  T strayAfter = 0;
+  for (const auto &sp : specks) {
+    const int id = lattice.cellId(sp);
+    if (id >= 0) strayAfter += fill[id];
+  }
+  check("detached specks are removed, edge and flat pair included",
+        strayAfter < T(1e-9),
+        "stray " + std::to_string(strayBefore) + " -> " +
+            std::to_string(strayAfter) + ", lost " +
+            std::to_string(step.volumeLost));
+}
+
 int main() {
   std::cout << "Voxel advance: moving a surface through filling fractions\n\n";
 
@@ -253,6 +349,10 @@ int main() {
 
   std::cout << "\n3) a tilted surface: distance moved after 3.0 of travel\n";
   checkTiltedAdvance();
+
+  std::cout << "\n4) support is geometric, not material\n";
+  checkThinFilmOnForeignSubstrate();
+  checkDetachedSpecksRemoved();
 
   std::cout << "\n";
   if (failures) {
