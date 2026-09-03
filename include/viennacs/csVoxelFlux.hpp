@@ -35,6 +35,8 @@ template <class T, int D> class VoxelFlux {
   const std::vector<T> *fill_ = nullptr;
   VoxelInteraction<T, D> interaction_;
   VoxelAdvance<T, D> areas_;
+  static constexpr int kBandReach = 2; ///< cells to walk each way along the
+                                       ///< normal when summing the patch
   mutable std::vector<T> areaCache_; ///< per-trace, fills frozen while rays fly
   /// Whether the caches and the acceleration structure describe the CURRENT
   /// fills. Set by prepareTransport, so several species traced against one
@@ -452,8 +454,79 @@ public:
         result.flux[id] = collected[id] / area;
     }
 
+    // A cell's own Youngs area and its own share of the deposits are two
+    // DIFFERENT partitions of the same interface: the gradient spreads the
+    // area over the band, while rays deposit where they happen to interact,
+    // which for a collimated beam is deeper. Dividing them cell by cell
+    // therefore reports a flux far from incident on the band's outer cells --
+    // measured +12.6% on the solid-side cell of a flat wafer, which alone
+    // carried the whole 1.6% blanket rate error. Both TOTALS are right, so
+    // the cure is to divide totals: sum deposits and areas across the band
+    // along the normal and give every cell in that patch the same density.
+    bandNormalise(collected, result.flux);
     smooth(result.flux, smoothingNeighbors);
     return result;
+  }
+
+  /// flux = (deposits summed across the band) / (area summed across the
+  /// band), walking the contiguous interface along the normal. Along the
+  /// normal only: an isotropic window of the same reach would average across
+  /// a sidewall and flatten real lateral structure.
+  void bandNormalise(const std::vector<T> &collected,
+                     std::vector<T> &flux) const {
+    const T delta = lattice_->gridDelta();
+    T faceArea = 1;
+    for (int d = 0; d < D - 1; ++d)
+      faceArea *= delta;
+    const T minArea = T(1e-2) * faceArea;
+    const auto &dims = lattice_->dims();
+    size_t sites = 1;
+    for (int d = 0; d < D; ++d)
+      sites *= static_cast<size_t>(dims[d]);
+
+    std::vector<T> patched = flux;
+    std::array<int, D> idx{};
+    for (size_t flat = 0; flat < sites; ++flat) {
+      size_t rem = flat;
+      for (int d = 0; d < D; ++d) {
+        idx[d] = static_cast<int>(rem % static_cast<size_t>(dims[d]));
+        rem /= static_cast<size_t>(dims[d]);
+      }
+      const int id = lattice_->cellId(idx);
+      if (id < 0 || areaAt(idx) <= minArea)
+        continue;
+
+      // dominant axis of the interface normal: the direction the band is
+      // thick in
+      const auto g = areas_.fillGradient(*fill_, idx);
+      int axis = 0;
+      T best = std::abs(g[0]);
+      for (int d = 1; d < D; ++d)
+        if (std::abs(g[d]) > best) {
+          best = std::abs(g[d]);
+          axis = d;
+        }
+      if (best <= T(0))
+        continue; // no usable normal: leave the cell as it is
+
+      T sumC = collected[id], sumA = areaAt(idx);
+      for (int sign = -1; sign <= 1; sign += 2)
+        for (int step = 1; step <= kBandReach; ++step) {
+          auto probe = idx;
+          probe[axis] += sign * step;
+          const int nid = lattice_->cellId(probe);
+          if (nid < 0)
+            break;
+          const T a = areaAt(probe);
+          if (a <= minArea)
+            break; // left the band: stop rather than reach across a gap
+          sumC += collected[nid];
+          sumA += a;
+        }
+      if (sumA > T(0))
+        patched[id] = sumC / sumA;
+    }
+    flux.swap(patched);
   }
 
   /// Area-weighted average of the flux over the interface neighbourhood.
