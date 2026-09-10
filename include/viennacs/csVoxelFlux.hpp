@@ -38,6 +38,25 @@ template <class T, int D> class VoxelFlux {
   static constexpr int kBandReach = 2; ///< cells to walk each way along the
                                        ///< normal when summing the patch
   mutable std::vector<T> areaCache_; ///< per-trace, fills frozen while rays fly
+  /// Unit interface normal per cell, cached for the same reason the area is:
+  /// the facet gate below asks for it once per encounter.
+  mutable std::vector<Vec3D<T>> normalCache_;
+  /// FACET GATE. A ray's deposit is spread over the interface in its 3^D
+  /// neighbourhood; this is the smallest cosine between the hit cell's normal
+  /// and a neighbour's for that neighbour to count as the SAME surface.
+  ///
+  /// At a convex corner the neighbourhood straddles two facets, and the share
+  /// each takes is set by area alone, so flux leaks across the corner. On the
+  /// pristine trench of the deposition benchmark the mouth corner read 1.169
+  /// of the incident flux while the flat field read 0.99. Under an etch that
+  /// error is self-correcting -- a corner that moves too fast recedes and
+  /// stops being a corner -- but under deposition it is positive feedback: the
+  /// corner grows out, stays a corner, and builds a tower that then shadows
+  /// everything below it.
+  ///
+  /// 0 keeps the isotropic neighbourhood, which is what every measurement
+  /// before this was made with.
+  T facetGate_ = 0;
   /// Whether the caches and the acceleration structure describe the CURRENT
   /// fills. Set by prepareTransport, so several species traced against one
   /// unchanged surface share a single build instead of rebuilding per trace.
@@ -77,6 +96,8 @@ public:
     for (int d = 0; d < D; ++d)
       sites *= static_cast<size_t>(dims[d]);
     areaCache_.assign(fill_->size(), T(0));
+    if (facetGate_ > T(0))
+      normalCache_.assign(fill_->size(), Vec3D<T>{0, 0, 0});
 #pragma omp parallel for schedule(static)
     for (long long flat = 0; flat < static_cast<long long>(sites); ++flat) {
       std::array<int, D> idx{};
@@ -86,9 +107,48 @@ public:
         rem /= static_cast<size_t>(dims[d]);
       }
       const int id = lattice_->cellId(idx);
-      if (id >= 0)
-        areaCache_[id] = areas_.interfaceArea(*fill_, idx);
+      if (id < 0)
+        continue;
+      areaCache_[id] = areas_.interfaceArea(*fill_, idx);
+      if (facetGate_ > T(0)) {
+        auto g = areas_.fillGradient(*fill_, idx);
+        T len = 0;
+        for (int d = 0; d < D; ++d)
+          len += g[d] * g[d];
+        if (len > T(0)) {
+          len = std::sqrt(len);
+          for (int d = 0; d < D; ++d)
+            g[d] /= len;
+          normalCache_[id] = g;
+        }
+      }
     }
+  }
+
+  /// The smallest cosine between two cells' interface normals for them to be
+  /// treated as the same facet. 0 disables the gate.
+  void setFacetGate(T cosine) { facetGate_ = cosine; }
+  T facetGate() const { return facetGate_; }
+
+  /// True when `probe` carries interface belonging to the same facet as
+  /// `centre`. With no gate, or with either normal undecided, everything
+  /// counts -- the behaviour this had before the gate existed.
+  bool sameFacet(int centre, int probe) const {
+    if (facetGate_ <= T(0) || normalCache_.size() != fill_->size())
+      return true;
+    if (centre < 0 || probe < 0)
+      return true;
+    const auto &a = normalCache_[centre];
+    const auto &b = normalCache_[probe];
+    T dot = 0, la = 0, lb = 0;
+    for (int d = 0; d < D; ++d) {
+      dot += a[d] * b[d];
+      la += a[d] * a[d];
+      lb += b[d] * b[d];
+    }
+    if (la <= T(0) || lb <= T(0))
+      return true; // no normal to judge by: do not exclude it
+    return dot >= facetGate_;
   }
 
   /// The cached interface area at a lattice coordinate; zero off the grid.
@@ -129,6 +189,7 @@ public:
     for (int d = 0; d < D; ++d)
       span *= 3;
 
+    const int centre = lattice_->cellId(idx);
     T totalArea = 0;
     for (int s = 0; s < span; ++s) {
       std::array<int, D> probe = idx;
@@ -137,7 +198,8 @@ public:
         probe[d] += rem % 3 - 1;
         rem /= 3;
       }
-      if (lattice_->cellId(probe) < 0)
+      const int pid = lattice_->cellId(probe);
+      if (pid < 0 || !sameFacet(centre, pid))
         continue;
       totalArea += areaAt(probe);
     }
@@ -155,7 +217,7 @@ public:
         rem /= 3;
       }
       const int id = lattice_->cellId(probe);
-      if (id < 0)
+      if (id < 0 || !sameFacet(centre, id))
         continue;
       const T area = areaAt(probe);
       if (area > T(0))
@@ -518,7 +580,7 @@ public:
           if (nid < 0)
             break;
           const T a = areaAt(probe);
-          if (a <= minArea)
+          if (a <= minArea || !sameFacet(id, nid))
             break; // left the band: stop rather than reach across a gap
           sumC += collected[nid];
           sumA += a;
@@ -571,8 +633,8 @@ public:
           r /= width;
         }
         const int nid = lattice_->cellId(probe);
-        if (nid < 0)
-          continue;
+        if (nid < 0 || !sameFacet(id, nid))
+          continue;   // averaging across a corner is the same leak again
         const T area = areaAt(probe);
         if (area <= minArea)
           continue;
