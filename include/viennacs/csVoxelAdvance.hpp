@@ -41,6 +41,31 @@ enum class AreaEstimator { StaircaseFaces, Gradient };
 template <class T, int D> class VoxelAdvance {
   const LatticeMap<T, D> *lattice_ = nullptr;
   AreaEstimator areaEstimator_ = AreaEstimator::Gradient;
+  /// How a cell's surplus fill is handed on: 0 along the dominant axis of the
+  /// normal, 1 over the outward FACES weighted by the normal's components,
+  /// 2 over the outward faces AND diagonals, weighted multinomially.
+  ///
+  /// DEFAULT 2. Measured on the trench of the deposition benchmark, advanced
+  /// at a UNIFORM velocity with no transport at all, so the answer is exactly
+  /// the 12 nm outward offset of the geometry:
+  ///
+  ///                   added volume     film top over the mouth corner
+  ///   0 dominant axis     +8.3 %       +8 nm, a plateau 8 cells wide
+  ///   1 faces             +2.2 %       +7 nm, a spike 3 cells wide
+  ///   2 faces + diagonal  -0.4 %       on the offset curve everywhere
+  ///
+  /// A 90 degree corner's normal splits its weight equally between two axes,
+  /// so pushing all of it along the larger one -- a coin flip between equals
+  /// -- sends the whole surplus one way. The cell it lands in is a corner
+  /// too, and the chain builds a horn where the offset surface has a fillet.
+  /// Under an ETCH the same error is self-correcting, since a corner that
+  /// moves too fast recedes and stops being a corner, which is why it never
+  /// showed on the SF6/O2 benchmark: switching this on changes the etched
+  /// volume there by 0.04 % (F only) and 0.08 % (full mechanism), and the
+  /// profiles lie on top of each other.
+  ///
+  /// setSurplusSpreading(0) restores the old behaviour exactly.
+  int spread_ = 2;
   bool wideStencil_ = true;
 
 public:
@@ -49,6 +74,10 @@ public:
       : lattice_(&lattice), areaEstimator_(estimator) {}
 
   void setAreaEstimator(AreaEstimator e) { areaEstimator_ = e; }
+  /// Spread each cell's surplus over its outward faces by the normal's
+  /// components rather than along the dominant axis alone.
+  void setSurplusSpreading(int mode) { spread_ = mode; }
+  int surplusSpreading() const { return spread_; }
   /// The narrow stencil differences only the face neighbours: cheaper, and
   /// markedly more anisotropic. It exists so the area estimate can be varied
   /// with the normal estimate it is supposed to agree with.
@@ -409,6 +438,15 @@ public:
     // thirteen cells of material while every fraction was a legal one.
     std::vector<int> pushAxis(fill.size(), -1);
     std::vector<int> pushDir(fill.size(), 0);
+    // The same normal, kept component by component. Pushing every cell's
+    // surplus along its DOMINANT axis alone is right on a facet and wrong at
+    // a corner, where the two components are equal and the choice between
+    // them is a coin flip: the whole surplus goes one way, the cell it lands
+    // in is a corner too, and the chain builds a horn instead of a fillet.
+    // On the deposition trench, advanced at a UNIFORM 19.92 nm/s with no
+    // transport at all, the mouth corners reached +20 nm while the field
+    // reached its correct +12.
+    std::vector<T> pushWeight(spread_ > 0 ? fill.size() * D : 0, T(0));
     // Independent per-cell writes: safe to parallelise, and deterministic.
 #pragma omp parallel for schedule(dynamic, 256)
     for (long long pflat = 0; pflat < static_cast<long long>(sites); ++pflat) {
@@ -434,6 +472,15 @@ public:
       if (best > T(1e-12)) {
         pushAxis[id] = axis;
         pushDir[id] = g[axis] > 0 ? 1 : -1; // outward, towards the void
+        if (spread_ > 0) {
+          T sum = 0;
+          for (int d = 0; d < D; ++d)
+            sum += std::abs(g[d]);
+          if (sum > T(0))
+            for (int d = 0; d < D; ++d)
+              // signed: the magnitude is the share, the sign is the way out
+              pushWeight[static_cast<size_t>(id) * D + d] = g[d] / sum;
+        }
       }
     }
 
@@ -499,6 +546,89 @@ public:
         }
         if (!overflowing)
           direction = -direction; // a deficit eats backwards, into the solid
+
+        if (spread_ > 0 && pushAxis[id] >= 0) {
+          // Share the surplus over the outward neighbourhood in proportion to
+          // the normal's components, across whichever cells can take it. On a
+          // facet one component carries nearly the whole weight and this is
+          // the single-axis push; at a corner it lays a fillet instead of a
+          // horn.
+          //
+          // Mode 2 includes the DIAGONAL. A 90 degree corner's normal splits
+          // its weight equally between two axes, and half the material then
+          // belongs on the diagonal -- which is exactly where the offset
+          // surface's fillet is. Restricted to the faces, that half is dealt
+          // to the two axis neighbours instead and the corner keeps a spike.
+          const int reach = spread_ >= 2 ? 3 : 0;
+          constexpr int kMaxTakers = D == 2 ? 8 : 26;
+          std::array<int, kMaxTakers> takerId{};
+          std::array<size_t, kMaxTakers> takerFlat{};
+          std::array<T, kMaxTakers> takerW{};
+          T wsum = 0;
+          int used = 0;
+          auto offer = [&](const std::array<int, D> &nb, T w) {
+            if (w <= T(1e-9))
+              return;
+            const int tid = lattice_->cellId(nb);
+            if (tid < 0 || !sameSolid(id, tid) || used >= kMaxTakers)
+              return;
+            takerId[used] = tid;
+            takerFlat[used] = flatten(nb);
+            takerW[used] = w;
+            wsum += w;
+            ++used;
+          };
+          if (reach == 0) {
+            for (int d = 0; d < D; ++d) {
+              const T wd = pushWeight[static_cast<size_t>(id) * D + d];
+              if (std::abs(wd) <= T(1e-9))
+                continue;
+              int sgn = wd > 0 ? 1 : -1;
+              if (!overflowing)
+                sgn = -sgn;
+              auto nb = idx;
+              nb[d] += sgn;
+              offer(nb, std::abs(wd));
+            }
+          } else {
+            // every outward offset in {0, out}^D except staying put, with
+            // weight prod_d ( |n_d| if it steps, 1 - |n_d| if it does not )
+            int span = 1;
+            for (int d = 0; d < D; ++d)
+              span *= 2;
+            for (int m = 1; m < span; ++m) {
+              auto nb = idx;
+              T w = 1;
+              for (int d = 0; d < D; ++d) {
+                const T wd = pushWeight[static_cast<size_t>(id) * D + d];
+                const T a = std::abs(wd);
+                if ((m >> d) & 1) {
+                  int sgn = wd > 0 ? 1 : -1;
+                  if (!overflowing)
+                    sgn = -sgn;
+                  nb[d] += sgn;
+                  w *= a;
+                } else {
+                  w *= T(1) - a;
+                }
+              }
+              offer(nb, w);
+            }
+          }
+          fill[id] = overflowing ? T(1) : T(0);
+          if (used == 0 || wsum <= T(0)) {
+            step.volumeLost += surplus * cellVolume;
+            continue;
+          }
+          for (int u = 0; u < used; ++u) {
+            fill[takerId[u]] += surplus * takerW[u] / wsum;
+            if (!queued[takerId[u]]) {
+              queued[takerId[u]] = 1;
+              next.push_back(takerFlat[u]);
+            }
+          }
+          continue;
+        }
 
         auto neighbour = idx;
         neighbour[axis] += direction;
