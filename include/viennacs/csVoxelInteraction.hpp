@@ -57,7 +57,13 @@ using namespace viennacore;
 ///
 /// A comparison against a level set that reports only one of these has
 /// answered only part of the question, so all three are here and switchable.
-enum class NormalEstimator { Face, FillGradient, FillGradientYoungs };
+enum class NormalEstimator {
+  Face,                ///< the face the ray entered through: 4 values in 2D
+  FillGradient,        ///< -grad(f), two-point stencil
+  FillGradientYoungs,  ///< -grad(f), Youngs' 3^D stencil
+  InterfaceAverage,    ///< mean of the exposed cell faces within a radius
+  InterfaceFit         ///< least-squares plane through the interface points
+};
 
 /// How a ray finds the cell it interacts with. The physics -- the acceptance
 /// probability, the normal, the arming distance -- is identical either way;
@@ -113,6 +119,50 @@ public:
       : lattice_(&lattice), fill_(&fill), traversal_(lattice),
         estimator_(estimator) {}
 
+  /// The estimator's normal at a cell, outside a ray trace. Zero when the
+  /// estimator has nothing to say (a Face normal is per-hit by nature).
+  Vec3D<T> normalAt(const std::array<int, D> &idx) const {
+    if (estimator_ == NormalEstimator::Face)
+      return Vec3D<T>{0, 0, 0};
+    const int id = lattice_->cellId(idx);
+    if (id < 0)
+      return Vec3D<T>{0, 0, 0};
+    if (normalValid_.size() == fill_->size())
+      return normalValid_[id] ? normalCache_[id] : Vec3D<T>{0, 0, 0};
+    return (estimator_ == NormalEstimator::InterfaceAverage ||
+            estimator_ == NormalEstimator::InterfaceFit)
+               ? (estimator_ == NormalEstimator::InterfaceFit ? interfaceFitNormal(idx) : interfaceNormal(idx))
+               : gradientNormal(idx, Vec3D<T>{0, 0, 0},
+                                estimator_ == NormalEstimator::FillGradientYoungs);
+  }
+
+  /// Normal AND centroid of the least-squares plane at a cell, in cell
+  /// units: the reconstructed continuous surface there.
+  bool fitPlaneAt(const std::array<int, D> &idx, Vec3D<T> &normal,
+                  std::array<T, D> &centroid) const {
+    normal = interfaceFitNormal(idx);
+    centroid = lastFitCentroid_;
+    return normal[0] != T(0) || normal[1] != T(0) || normal[2] != T(0);
+  }
+
+  void setInterfaceRadius(int r) const { interfaceRadius_ = r > 0 ? r : 1; }
+  /// Disable to get MCFPM's plain fixed-radius fit.
+  void setCurvatureCap(bool on) { curvatureCap_ = on; }
+  /// Off restores the plain fit over the whole neighbourhood.
+  void setSegmentedFit(bool on) { segment_ = on; }
+  void setSegmentTolerance(T t) { segmentTol_ = t > T(0) ? t : T(1.5); }
+  bool curvatureCap() const { return curvatureCap_; }
+  void setMinInterfaceRadius(int r) { minInterfaceRadius_ = r > 1 ? r : 2; }
+  void setCurvatureAlpha(T a) { curvAlpha_ = a > T(0) ? a : T(0.18); }
+  /// fits, of those capped, and the mean radius the cap chose
+  void capStats(long &fits, long &fired, double &meanR) const {
+    fits = capFits_; fired = capFired_;
+    meanR = capFired_ ? double(capRSum_) / double(capFired_) : 0.0; }
+  T lastFitRms() const { return lastFitRms_; }
+  /// how many surface cells the last plane fit was built from
+  int lastFitPoints() const { return lastFitPts_; }
+  int interfaceRadius() const { return interfaceRadius_; }
+
   void setNormalEstimator(NormalEstimator e) {
     estimator_ = e;
     normalValid_.clear(); // the cache belongs to one estimator
@@ -155,7 +205,10 @@ public:
       // A zero sentinel face normal: gradientNormal returns it exactly when
       // the gradient is degenerate, which is the case where the per-hit face
       // normal must stand in.
-      const auto n = gradientNormal(idx, Vec3D<T>{0, 0, 0}, wide);
+      const auto n = (estimator_ == NormalEstimator::InterfaceAverage ||
+                          estimator_ == NormalEstimator::InterfaceFit)
+                         ? (estimator_ == NormalEstimator::InterfaceFit ? interfaceFitNormal(idx) : interfaceNormal(idx))
+                         : gradientNormal(idx, Vec3D<T>{0, 0, 0}, wide);
       if (n[0] != T(0) || n[1] != T(0) || n[2] != T(0)) {
         normalCache_[id] = n;
         normalValid_[id] = 1;
@@ -171,6 +224,11 @@ public:
       return faceNormal;
     if (normalValid_.size() == fill_->size())
       return normalValid_[id] ? normalCache_[id] : faceNormal;
+    if (estimator_ == NormalEstimator::InterfaceAverage ||
+        estimator_ == NormalEstimator::InterfaceFit) {
+      const auto n = interfaceNormal(idx);
+      return (n[0] != T(0) || n[1] != T(0) || n[2] != T(0)) ? n : faceNormal;
+    }
     return gradientNormal(idx, faceNormal,
                           estimator_ == NormalEstimator::FillGradientYoungs);
   }
@@ -187,6 +245,260 @@ public:
   /// domain a normal pointing out of it.
   T fillClamped(const std::array<int, D> &idx) const {
     return fillFieldClamped(*lattice_, *fill_, idx);
+  }
+
+  /// Radius, in cells, of the InterfaceAverage stencil. A binary field
+  /// carries its orientation in the ARRANGEMENT of cells, not in any one
+  /// cell, so the stencil has to be wider than the 3^D a gradient uses:
+  /// measured against planes voxelised at known tilts, the mean error is
+  /// 45 deg for a face normal, 11 deg for Youngs' 3^D, 3.1 deg at R = 2 and
+  /// 2.5 deg at R = 3.
+  mutable int interfaceRadius_ = 3;
+  mutable T lastFitRms_ = 0;     ///< RMS plane residual of the last fit, cells
+  mutable int lastFitPts_ = 0;   ///< surface cells the last fit used
+  T curvAlpha_ = T(0.18);        ///< allowed rms per unit radius
+  mutable long capFits_ = 0, capFired_ = 0, capRSum_ = 0;
+  int minInterfaceRadius_ = 2;   ///< the cap never shrinks below this
+  bool curvatureCap_ = true;     ///< shrink the stencil on curved surfaces
+  bool segment_ = true;          ///< fit one face only, not across a corner
+  int seedRadius_ = 2;           ///< stencil for the segmentation seed
+  T segmentTol_ = T(1.5);        ///< cells off the seed plane, kept
+
+  /// Mean of the outward unit normals of every solid/gas cell face within
+  /// `interfaceRadius_` cells. This is the staircase's own surface, averaged
+  /// -- the orientation a facetted geometry actually presents, rather than
+  /// the one facet a ray happened to enter through. Zero when the
+  /// neighbourhood holds no interface at all, so the caller can fall back.
+  /// Least-squares plane through the solid/gas face midpoints in the
+  /// neighbourhood -- the estimator the Monte Carlo feature profile models
+  /// use, developed there for specular ion scattering off a cubic mesh.
+  ///
+  /// Measured against planes voxelised at known tilts, mean error over
+  /// 0-90 deg: face normal 45 deg, Youngs' 3^D stencil 11 deg, mean of the
+  /// exposed faces 2.5 deg, this fit 1.4 deg. The eigenvector of the smallest
+  /// eigenvalue of the point covariance is the plane normal; the mean face
+  /// normal only fixes its sign.
+  /// The fitted plane's centroid, in CELL units -- the point the plane
+  /// passes through. Paired with interfaceFitNormal it is the reconstructed
+  /// surface MCFPM intersects the ray with to get the exact impact point.
+  mutable std::array<T, D> lastFitCentroid_{};
+
+  /// The same fit at a chosen radius, without disturbing the cached one.
+  /// Used for the SPECULAR direction, which needs a smoother normal than the
+  /// yield angle does.
+  Vec3D<T> fitNormalAt(const std::array<int, D> &idx, int radius) const {
+    const int keep = interfaceRadius_;
+    interfaceRadius_ = radius > 1 ? radius : 2;
+    const auto n = interfaceFitNormal(idx);
+    interfaceRadius_ = keep;
+    return n;
+  }
+
+  Vec3D<T> fitNormalCore(const std::array<int, D> &idx,
+                         const Vec3D<T> *seed = nullptr) const {
+    // MCFPM's algorithm (Huard thesis 2.5.3; Guo & Sawin 2009 review): fit a
+    // plane Ax+By+Cz=D by least squares to the CENTRES of the surface sites
+    // within a search distance, typically 4*dx. Cell centres, not cell faces:
+    // "a continuous surface must be generated from the surface cells rather
+    // than using the faces of the surface cells. The use of the cell surface
+    // can give rise to numerical artefacts." D is their centre of mass, so
+    // the plane through the centroid with the least-variance direction as its
+    // normal -- the smallest-eigenvalue eigenvector of the covariance.
+    const int R = interfaceRadius_;
+    std::vector<std::array<T, D>> pts;
+    std::array<T, D> mean{};
+    std::array<int, D> at{}, lo{}, hi{};
+    for (int d = 0; d < D; ++d) { lo[d] = idx[d] - R; hi[d] = idx[d] + R; at[d] = lo[d]; }
+    while (true) {
+      if (fillAt(at) >= T(0.5)) {
+        bool exposed = false;              // "one or more faces exposed"
+        for (int d = 0; d < D && !exposed; ++d)
+          for (int sgn = -1; sgn <= 1; sgn += 2) {
+            auto nb = at; nb[d] += sgn;
+            if (fillAt(nb) < T(0.5)) { exposed = true; break; }
+          }
+        if (exposed) {
+          std::array<T, D> p{};
+          for (int d = 0; d < D; ++d) p[d] = static_cast<T>(at[d]);
+          // SEGMENTATION: keep only the cells that lie on the SAME face as
+          // the centre cell. A plane fit is meaningful over one face; at a
+          // floor/wall corner the neighbourhood holds both, and the wall wins
+          // on cell count -- a tall mask contributes a stacked column of
+          // exposed cells within the radius while the floor contributes a
+          // single row -- so the fitted normal swings toward horizontal and
+          // an ion reads grazing incidence on a flat floor. Measured on a
+          // W=40 trench, the share of floor impacts binned at 80-90 deg runs
+          // 1.1 % at R=4 and 9.6 % at R=12, and the yield in that bin falls
+          // from 42.7 to 0.7 atoms per ion.
+          bool keep = true;
+          if (seed) {
+            T off = 0;
+            for (int d = 0; d < D; ++d)
+              off += (*seed)[d] * (p[d] - static_cast<T>(idx[d]));
+            keep = std::abs(off) <= segmentTol_;
+          }
+          if (keep) {
+            for (int d = 0; d < D; ++d) mean[d] += p[d];
+            pts.push_back(p);
+          }
+        }
+      }
+      int d = 0;
+      for (; d < D; ++d) { if (++at[d] <= hi[d]) break; at[d] = lo[d]; }
+      if (d == D) break;
+    }
+    const int m = static_cast<int>(pts.size());
+    lastFitPts_ = m;
+    if (m < D + 1)
+      return Vec3D<T>{0, 0, 0};
+    for (int d = 0; d < D; ++d) mean[d] /= static_cast<T>(m);
+    lastFitCentroid_ = mean;
+    T C[D][D] = {};
+    for (const auto &p : pts)
+      for (int a = 0; a < D; ++a)
+        for (int b = 0; b < D; ++b)
+          C[a][b] += (p[a] - mean[a]) * (p[b] - mean[b]);
+    T V[D][D] = {};
+    for (int d = 0; d < D; ++d) V[d][d] = 1;
+    for (int sweep = 0; sweep < 32; ++sweep) {
+      int pI = 0, qI = 1; T big = 0;
+      for (int a = 0; a < D; ++a)
+        for (int b = a + 1; b < D; ++b)
+          if (std::abs(C[a][b]) > big) { big = std::abs(C[a][b]); pI = a; qI = b; }
+      if (big < T(1e-12)) break;
+      const T th = T(0.5) * std::atan2(T(2) * C[pI][qI], C[pI][pI] - C[qI][qI]);
+      const T c = std::cos(th), sn = std::sin(th);
+      for (int k = 0; k < D; ++k) {
+        const T cp = C[pI][k], cq = C[qI][k];
+        C[pI][k] = c * cp + sn * cq; C[qI][k] = -sn * cp + c * cq;
+      }
+      for (int k = 0; k < D; ++k) {
+        const T cp = C[k][pI], cq = C[k][qI];
+        C[k][pI] = c * cp + sn * cq; C[k][qI] = -sn * cp + c * cq;
+        const T vp = V[k][pI], vq = V[k][qI];
+        V[k][pI] = c * vp + sn * vq; V[k][qI] = -sn * vp + c * vq;
+      }
+    }
+    int least = 0;
+    for (int d = 1; d < D; ++d) if (C[d][d] < C[least][least]) least = d;
+    // RMS distance of the points from the fitted plane, in CELL units. On a
+    // flat wall this is just the staircase, ~0.29; on a curved one it grows
+    // as the patch departs from planarity, which is what caps the stencil.
+    lastFitRms_ = std::sqrt(std::max(T(0), C[least][least]) / static_cast<T>(m));
+    Vec3D<T> n{0, 0, 0};
+    for (int d = 0; d < D; ++d) n[d] = V[d][least];
+    // Orientation by polling, as MCFPM does: three points along +n and -n;
+    // a solid cell votes against that direction, a gas cell votes for it.
+    int votes = 0;
+    for (int step = 1; step <= 3; ++step)
+      for (int sgn = -1; sgn <= 1; sgn += 2) {
+        std::array<int, D> probe{};
+        for (int d = 0; d < D; ++d)
+          probe[d] = idx[d] + static_cast<int>(std::lround(sgn * step * n[d]));
+        const int v = (fillAt(probe) < T(0.5)) ? 1 : -1;
+        votes += sgn * v;
+      }
+    if (votes < 0) for (int d = 0; d < D; ++d) n[d] = -n[d];
+    T len = 0;
+    for (int d = 0; d < D; ++d) len += n[d] * n[d];
+    if (len < T(1e-12)) return Vec3D<T>{0, 0, 0};
+    len = std::sqrt(len);
+    for (int d = 0; d < D; ++d) n[d] /= len;
+    return n;
+  }
+
+
+  /// The plane fit, with the stencil capped by the LOCAL CURVATURE.
+  ///
+  /// A least-squares plane is only meaningful over a patch that is actually
+  /// planar. On a trench sidewall that is any radius, so the widest stencil
+  /// wins and the staircase is smoothed away. On a hole of bore radius r it
+  /// is not: once the patch spans a large angle the fit cuts across the
+  /// bore, the normal swings inward, and the etch collapses.
+  ///
+  /// Measured on masked holes, the floor error tracks R/r rather than R --
+  /// r=8/R=4 and r=20/R=12 agree at -16.9 % and -16.1 %, while r=8/R=8
+  /// (R/r = 1) falls to -33 %. So the bound is angular. For a patch of
+  /// half-width R on radius r the out-of-plane RMS is ~0.298 R^2 / r, which
+  /// turns the empirical R/r <= 0.6 into the scale-free test
+  ///
+  ///     rms <= curvAlpha_ * R,    kCurvAlpha = 0.18
+  ///
+  /// costing nothing to evaluate: rms is the smallest eigenvalue of the fit
+  /// we already do. A flat staircase gives rms ~0.29, which passes at every
+  /// R >= 2, so this never fires on a trench. When it does fire, inverting
+  /// the same relation gives the radius that would have passed,
+  /// R' = curvAlpha_ * R^2 / rms, and one refit there is enough.
+  Vec3D<T> interfaceFitNormal(const std::array<int, D> &idx) const {
+    const int R = interfaceRadius_;
+    // Seed the segmentation with the mean of the exposed faces over a small
+    // stencil: crude (2.5 deg) but it cannot straddle a corner, which is all
+    // that is asked of it. The full fit then runs on one face only.
+    Vec3D<T> n;
+    if (segment_ && R > seedRadius_) {
+      const int keepR = interfaceRadius_;
+      interfaceRadius_ = seedRadius_;
+      const Vec3D<T> n0 = interfaceNormal(idx);
+      interfaceRadius_ = keepR;
+      T l = 0;
+      for (int d = 0; d < D; ++d) l += n0[d] * n0[d];
+      n = (l > T(1e-12)) ? fitNormalCore(idx, &n0) : fitNormalCore(idx);
+    } else {
+      n = fitNormalCore(idx);
+    }
+    ++capFits_;
+    if (!curvatureCap_ || R <= minInterfaceRadius_ || lastFitRms_ <= T(0))
+      return n;
+    if (lastFitRms_ <= curvAlpha_ * static_cast<T>(R))
+      return n;
+    int rNew = static_cast<int>(curvAlpha_ * static_cast<T>(R) *
+                                static_cast<T>(R) / lastFitRms_);
+    if (rNew < minInterfaceRadius_) rNew = minInterfaceRadius_;
+    if (rNew >= R) return n;
+    ++capFired_; capRSum_ += rNew;
+    interfaceRadius_ = rNew;
+    const auto nn = fitNormalCore(idx);
+    interfaceRadius_ = R;
+    // A degenerate neighbourhood at the smaller radius is worse than a
+    // curved fit at the larger one, so keep the wide answer in that case.
+    T len = 0;
+    for (int d = 0; d < D; ++d) len += nn[d] * nn[d];
+    return len > T(0.5) ? nn : n;
+  }
+
+  Vec3D<T> interfaceNormal(const std::array<int, D> &idx) const {
+    const int R = interfaceRadius_;
+    Vec3D<T> sum{0, 0, 0};
+    std::array<int, D> at{}, nb{};
+    std::array<int, D> lo{}, hi{};
+    for (int d = 0; d < D; ++d) {
+      lo[d] = idx[d] - R;
+      hi[d] = idx[d] + R;
+      at[d] = lo[d];
+    }
+    while (true) {
+      if (fillAt(at) >= T(0.5)) {
+        for (int d = 0; d < D; ++d)
+          for (int sgn = -1; sgn <= 1; sgn += 2) {
+            nb = at;
+            nb[d] += sgn;
+            if (fillAt(nb) < T(0.5))
+              sum[d] += static_cast<T>(sgn);   // face points solid -> gas
+          }
+      }
+      int d = 0;
+      for (; d < D; ++d) {
+        if (++at[d] <= hi[d])
+          break;
+        at[d] = lo[d];
+      }
+      if (d == D)
+        break;
+    }
+    const T len = std::sqrt(sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]);
+    if (len < T(1e-12))
+      return Vec3D<T>{0, 0, 0};
+    return Vec3D<T>{sum[0] / len, sum[1] / len, sum[2] / len};
   }
 
   /// -grad(f), normalised. Falls back to the face normal where the gradient
