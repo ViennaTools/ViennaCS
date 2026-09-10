@@ -161,8 +161,15 @@ template <int D> void bindAPI(py::module &module) {
            &DenseCellSet<T, D>::addFillingFractionInMaterial,
            "Add to the filling fraction for cell which contains given point "
            "only if the cell has the specified material ID.")
-      .def("writeVTU", &DenseCellSet<T, D>::writeVTU,
-           "Write the cell set as .vtu file")
+      .def("writeVTU",
+           static_cast<void (DenseCellSet<T, D>::*)(const std::string &)>(
+               &DenseCellSet<T, D>::writeVTU),
+           "Write the cell set as .vtu file, leaving out the cover material.")
+      .def("writeVTU",
+           static_cast<void (DenseCellSet<T, D>::*)(const std::string &, int)>(
+               &DenseCellSet<T, D>::writeVTU),
+           "Write the cell set as .vtu file, leaving out cells of the given "
+           "material. Pass -1 to write every cell.")
       .def("writeCellSetData", &DenseCellSet<T, D>::writeCellSetData,
            "Save cell set data in simple text format.")
       .def("readCellSetData", &DenseCellSet<T, D>::readCellSetData,

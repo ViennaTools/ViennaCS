@@ -326,6 +326,10 @@ public:
     }
   }
 
+  /// Adding a field that does not exist yet INVALIDATES every pointer and
+  /// reference a caller already holds into the cell data -- the underlying
+  /// vector of vectors reallocates. Add all fields first, then take
+  /// references. (fillingFractions_ is re-fetched below for this reason.)
   std::vector<T> *addScalarData(std::string name, T initValue = 0.) {
     if (cellGrid->getCellData().getScalarData(name, true) != nullptr) {
       auto data = cellGrid->getCellData().getScalarData(name);
@@ -597,11 +601,74 @@ public:
   }
 
   // Write the cell set as .vtu file
+  /// Write the cell set as .vtu, LEAVING OUT the cover material.
+  ///
+  /// A dense cell set spans the gas so that rays have somewhere to travel,
+  /// but a gas cell is nothing to look at: in a viewer it buries the surface
+  /// inside a block of empty cells, and it is the bulk of the file. The cover
+  /// material is what fromLevelSets() filled that region with, so it is the
+  /// one to drop. A set built without a cover (every region a real material,
+  /// as an ambient level set gives) has coverMaterial = -1 and writes whole.
   void writeVTU(const std::string &fileName) {
-    viennals::VTKWriter<T>(cellGrid, fileName).apply();
+    writeVTU(fileName, coverMaterial);
   }
 
-  // Save cell set data in simple text format
+  /// As above, choosing what to leave out. Pass -1 to write every cell.
+  ///
+  /// Cells of `excludeMaterial` are dropped together with every node no
+  /// surviving cell uses; all scalar fields are carried over for the rest.
+  void writeVTU(const std::string &fileName, int excludeMaterial) {
+    if (excludeMaterial < 0) {
+      viennals::VTKWriter<T>(cellGrid, fileName).apply();
+      return;
+    }
+    constexpr unsigned VertsPerCell = 1 << D;
+    const auto &elems = cellGrid->template getElements<VertsPerCell>();
+    const auto &mat = *cellGrid->getCellData().getScalarData("Material");
+
+    std::vector<size_t> keep;
+    keep.reserve(elems.size());
+    for (size_t e = 0; e < elems.size(); ++e)
+      if (static_cast<int>(mat[e]) != excludeMaterial)
+        keep.push_back(e);
+    if (keep.size() == elems.size()) {
+      viennals::VTKWriter<T>(cellGrid, fileName).apply();
+      return;
+    }
+
+    auto out = SmartPointer<viennals::Mesh<T>>::New();
+    std::vector<int> nodeMap(cellGrid->nodes.size(), -1);
+    for (auto e : keep)
+      for (unsigned v : elems[e])
+        if (nodeMap[v] < 0) {
+          nodeMap[v] = static_cast<int>(out->nodes.size());
+          out->nodes.push_back(cellGrid->nodes[v]);
+        }
+    auto &outElems = out->template getElements<VertsPerCell>();
+    outElems.reserve(keep.size());
+    for (auto e : keep) {
+      std::array<unsigned, VertsPerCell> cell{};
+      for (unsigned i = 0; i < VertsPerCell; ++i)
+        cell[i] = static_cast<unsigned>(nodeMap[elems[e][i]]);
+      outElems.push_back(cell);
+    }
+
+    const auto &cd = cellGrid->getCellData();
+    for (unsigned s = 0; s < cd.getScalarDataSize(); ++s) {
+      const auto &src = *cd.getScalarData(s);
+      std::vector<T> dst;
+      dst.reserve(keep.size());
+      for (auto e : keep)
+        dst.push_back(src[e]);
+      out->cellData.insertNextScalarData(std::move(dst),
+                                         cd.getScalarDataLabel(s));
+    }
+    out->minimumExtent = cellGrid->minimumExtent;
+    out->maximumExtent = cellGrid->maximumExtent;
+    viennals::VTKWriter<T>(out, fileName).apply();
+  }
+
+
   void writeCellSetData(const std::string &fileName) const {
     auto numScalarData = cellGrid->getCellData().getScalarDataSize();
 
